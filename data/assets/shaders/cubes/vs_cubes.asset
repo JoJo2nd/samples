@@ -1,0 +1,12 @@
+{
+  "friendlyname": "shaders.vs_cubes.sc", 
+  "inputs": [
+    "vs_cubes.sc"
+  ], 
+  "type": "shader", 
+  "uuid": "{05a734ac-8fae-4c49-8571-d6b7d652c11f}", 
+  "processoptions": {
+    "platformext": "-p vs_5_0 --debug", 
+    "type": "vertex"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "friendlyname": "meshs/lostempire/object", 
+  "inputs": [
+    "lost_empire.obj"
+  ], 
+  "type": "mesh", 
+  "uuid": "{1d185f14-eed5-4d6e-9b50-03f2805fc962}", 
+  "processoptions": {}
+}

@@ -1,0 +1,453 @@
+# Blender MTL File: 'None'
+# Material Count: 40
+
+newmtl Bed
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.800000 0.160000 0.160000
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 0.000000
+illum 2
+map_Kd house-RGBA.png
+map_Ka house-RGBA.png
+map_d house-Alpha.png
+
+newmtl Bookshelf
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.379608 0.282353 0.178823
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Chest
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.501961 0.348235 0.109804
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Coal_Ore
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.163138 0.163138 0.163138
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Cobblestone
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.407843 0.407843 0.407843
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Cobblestone_Stairs
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.404706 0.404706 0.404706
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Dandelion
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.796862 0.796862 0.006275
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 0.000000
+illum 2
+map_Kd house-RGBA.png
+map_Ka house-RGBA.png
+map_d house-Alpha.png
+
+newmtl Dirt
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.439216 0.310588 0.213334
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Double_Slab
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.520784 0.520784 0.520784
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Fence
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.498823 0.404706 0.244706
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Glass_Pane
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.602353 0.771765 0.796862
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 0.000000
+illum 2
+map_Kd house-RGBA.png
+map_Ka house-RGBA.png
+map_d house-Alpha.png
+
+newmtl Glowstone
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.781177 0.665098 0.489412
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Grass
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.376470 0.561569 0.241569
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Gravel
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.417255 0.385882 0.385882
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Iron_Bars
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.511373 0.514510 0.514510
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 0.000000
+illum 2
+map_Kd house-RGBA.png
+map_Ka house-RGBA.png
+map_d house-Alpha.png
+
+newmtl Iron_Block
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.746666 0.746666 0.746666
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Iron_Door
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.558431 0.558431 0.558431
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 0.000000
+illum 2
+map_Kd house-RGBA.png
+map_Ka house-RGBA.png
+map_d house-Alpha.png
+
+newmtl Iron_Ore
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.589804 0.480000 0.401569
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Ladder
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.533334 0.420392 0.254118
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Leaves
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.178823 0.536470 0.122353
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 0.000000
+illum 2
+map_Kd house-RGBA.png
+map_Ka house-RGBA.png
+map_d house-Alpha.png
+
+newmtl Lever
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.432941 0.332549 0.191373
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Log
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.555294 0.451765 0.282353
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Red_Wool
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.511373 0.138039 0.125490
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Redstone_Torch_(on)
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.793726 0.000000 0.000000
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 0.000000
+illum 2
+map_Kd house-RGBA.png
+map_Ka house-RGBA.png
+map_d house-Alpha.png
+
+newmtl Rose
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.800000 0.047059 0.047059
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 0.000000
+illum 2
+map_Kd house-RGBA.png
+map_Ka house-RGBA.png
+map_d house-Alpha.png
+
+newmtl Sand
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.702745 0.677647 0.520784
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Sandstone
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.702745 0.677647 0.520784
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Stone
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.376470 0.376470 0.376470
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Stone_Brick
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.379608 0.379608 0.379608
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Stone_Brick_Stairs
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.379608 0.379608 0.379608
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Stone_Button
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.539608 0.539608 0.539608
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Stone_Slab
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.517647 0.517647 0.517647
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Tall_Grass
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.326274 0.511373 0.191373
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 0.000000
+illum 2
+map_Kd house-RGBA.png
+map_Ka house-RGBA.png
+map_d house-Alpha.png
+
+newmtl Torch
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.790588 0.790588 0.000000
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 0.000000
+illum 2
+map_Kd house-RGBA.png
+map_Ka house-RGBA.png
+map_d house-Alpha.png
+
+newmtl Wall_Sign
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.520784 0.432941 0.219608
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl White_Wool
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.693334 0.693334 0.693334
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Wooden_Door
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.395294 0.291765 0.141177
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 0.000000
+illum 2
+map_Kd house-RGBA.png
+map_Ka house-RGBA.png
+map_d house-Alpha.png
+
+newmtl Wooden_Plank
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.498823 0.404706 0.250981
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Wooden_Plate
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.492549 0.398431 0.244706
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png
+
+newmtl Wooden_Stairs
+Ns 0.000000
+Ka 0.000000 0.000000 0.000000
+Kd 0.495686 0.401569 0.247843
+Ks 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd house-RGB.png
+map_Ka house-RGB.png

@@ -1,0 +1,11 @@
+{
+  "friendlyname": "meshs/rungholt/texture", 
+  "inputs": [
+    "rungholt-RGBA.png"
+  ], 
+  "type": "texture", 
+  "uuid": "{b740609f-1bc1-42b7-b0dd-d0a75541ccc0}", 
+  "processoptions": {
+    "format": "BC3"
+  }
+}

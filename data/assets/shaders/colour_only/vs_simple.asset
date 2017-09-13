@@ -1,0 +1,12 @@
+{
+  "friendlyname": "shaders/colour_only/vertex", 
+  "inputs": [
+    "vs_simple.sc"
+  ], 
+  "type": "shader", 
+  "uuid": "{2444aac4-7077-42e6-9882-83a52cb243e3}", 
+  "processoptions": {
+    "platformext": "-p vs_5_0 --debug", 
+    "type": "vertex"
+  }
+}

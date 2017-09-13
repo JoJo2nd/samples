@@ -1,0 +1,15 @@
+{
+  "friendlyname": "objects/monster/object", 
+  "inputs": [
+    "monster.json", 
+    "..\\fbs\\fbs_load\\include_test1.fbs", 
+    "..\\fbs\\fbs_load\\include_test2.fbs", 
+    "..\\fbs\\fbs_load\\monster_test.fb"
+  ], 
+  "type": "fbs", 
+  "uuid": "{df44fa3c-e72d-4ba2-a6b0-f0a986cd4860}", 
+  "processoptions": {
+    "input": "monster.json", 
+    "def": "../fbs/fbs_load/monster_test.fbs"
+  }
+}

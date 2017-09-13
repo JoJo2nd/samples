@@ -1,0 +1,12 @@
+{
+  "friendlyname": "shaders/colour_only/pixel", 
+  "inputs": [
+    "ps_simple.sc"
+  ], 
+  "type": "shader", 
+  "uuid": "{d53d25d4-2dc9-4bc3-8ff0-7724e47caecc}", 
+  "processoptions": {
+    "platformext": "-p ps_5_0 --debug", 
+    "type": "fragment"
+  }
+}

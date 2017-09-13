@@ -1,0 +1,33 @@
+{
+	"folders":
+	[
+		{
+			"path": "."
+		}
+	],
+    "build_systems": [
+        {
+            "name": "MSBuild",
+            "selector": "source.c++",
+            "working_dir": "${project_path}",
+            "file_regex": "\\s*(.*)\\((\\d+)\\)",
+            "shell": true,
+            "variants": [
+                {
+                    "name": "Solution Debug",
+                    "cmd": ["msbuild_make.bat", "${project_path}/build", "gfx.sln", "Debug"]
+                },
+                {
+                    "name": "Solution Release",
+                    "cmd": ["msbuild_make.bat", "${project_path}/build", "gfx.sln", "Release"]
+                },
+                {
+                    "name": "Build Data",
+                    "working_dir": "${file_path}/",
+                    "cmd": ["build_data.bat"]
+                },
+            ]
+        }
+    ]
+
+}

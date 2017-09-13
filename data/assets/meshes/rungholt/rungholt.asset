@@ -1,0 +1,9 @@
+{
+  "friendlyname": "meshs/rungholt/object", 
+  "inputs": [
+    "house.obj"
+  ], 
+  "type": "mesh", 
+  "uuid": "{e02878b6-d726-47bf-9fcd-885d924a973c}", 
+  "processoptions": {}
+}

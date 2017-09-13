@@ -1,0 +1,11 @@
+{
+  "friendlyname": "meshs/lostempire/texture", 
+  "inputs": [
+    "lost_empire-RGBA.png"
+  ], 
+  "type": "texture", 
+  "uuid": "{5a737594-b41d-43cf-9b38-afcb672ac09e}", 
+  "processoptions": {
+    "format": "BC3"
+  }
+}

@@ -1,0 +1,9 @@
+build/*
+build2/*
+data/runtime/*
+data/databin/*
+src/cell_and_portal/data/*
+src/*/data/*
+
+*.pyc
+*.sublime-workspace

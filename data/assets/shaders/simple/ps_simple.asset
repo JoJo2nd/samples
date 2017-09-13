@@ -1,0 +1,12 @@
+{
+  "friendlyname": "shaders/simple/ps_simple.sc", 
+  "inputs": [
+    "ps_simple.sc"
+  ], 
+  "type": "shader", 
+  "uuid": "{4e91cb08-6908-45e7-9238-d8f80593a789}", 
+  "processoptions": {
+    "platformext": "-p ps_5_0 --debug", 
+    "type": "fragment"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "friendlyname": "shaders_vs_simple.sc", 
+  "inputs": [
+    "vs_simple.sc"
+  ], 
+  "type": "shader", 
+  "uuid": "{8961b72a-1195-4605-9505-8af3a4734479}", 
+  "processoptions": {
+    "platformext": "-p vs_5_0 --debug", 
+    "type": "vertex"
+  }
+}

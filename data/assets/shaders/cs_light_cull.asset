@@ -1,0 +1,12 @@
+{
+  "friendlyname": "shaders_cs_light_cull.sc", 
+  "inputs": [
+    "cs_light_cull.sc"
+  ], 
+  "type": "shader", 
+  "uuid": "{BDB656D5-46FE-4F16-930B-82CAE7E74045}", 
+  "processoptions": {
+    "platformext": "-p cs_5_0 --debug", 
+    "type": "compute"
+  }
+}

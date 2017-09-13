@@ -1,0 +1,12 @@
+{
+  "friendlyname": "shaders.fs_cubes.sc", 
+  "inputs": [
+    "fs_cubes.sc"
+  ], 
+  "type": "shader", 
+  "uuid": "{cd599958-edc9-45c1-bdb2-b2a6e66dbae3}", 
+  "processoptions": {
+    "platformext": "-p ps_5_0", 
+    "type": "fragment"
+  }
+}
