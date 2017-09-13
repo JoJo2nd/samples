@@ -35,6 +35,9 @@
 #define FS_FSDEBUG_WCS_ASSET_PATH  ("data/fs_debug_wcs.ps")
 #define FS_FSDEBUG_WOCS_ASSET_PATH ("data/fs_debug_wocs.ps")
 
+#define VS_Z_FILL ("data/zfill.vs")
+#define PS_Z_FILL ("data/zfill.ps")
+
 #define PI (3.1415926535897932384626433832795f)
 #define deg_to_rad(x) (x * (PI/180.f))
 

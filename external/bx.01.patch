@@ -1,0 +1,14 @@
+diff --git a/include/bx/bx.h b/include/bx/bx.h
+index d07a624..a1f409c 100644
+--- a/include/bx/bx.h
++++ b/include/bx/bx.h
+@@ -6,7 +6,8 @@
+ #ifndef BX_H_HEADER_GUARD
+ #define BX_H_HEADER_GUARD
+ 
+-#include <alloca.h> // alloca
++//#include <alloca.h> // alloca VS2015 doesn't like this
++#include <malloc.h>
+ #include <stdarg.h> // va_list
+ #include <stdint.h> // uint32_t
+ #include <stdlib.h> // size_t

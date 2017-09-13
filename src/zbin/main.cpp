@@ -370,9 +370,10 @@ private:
                 bgfx::Memory const* ps = loadMem(data[i].meshPSPath);
                 data[i].solidProg = bgfx::createProgram(bgfx::createShader(vs), bgfx::createShader(ps), true);
             }
-            if (data[i].meshVSPath) {
-                bgfx::Memory const* vs = loadMem(data[i].meshVSPath);
-                data[i].zfillProg = bgfx::createProgram(bgfx::createShader(vs), BGFX_INVALID_HANDLE, true);
+            /*if (data[i].meshVSPath)*/ {
+                bgfx::Memory const* vs = loadMem(VS_Z_FILL);
+                bgfx::Memory const* ps = loadMem(PS_Z_FILL);
+                data[i].zfillProg = bgfx::createProgram(bgfx::createShader(vs), bgfx::createShader(ps), true);
             }
             if (data[i].fsDbgVSPath && data[i].fsDbgPSPath) {
                 bgfx::Memory const* vs = loadMem(data[i].fsDbgVSPath);
@@ -424,6 +425,7 @@ private:
             , 0
             );
         bgfx::setViewName(RENDER_PASS_COMPUTE, "Compute Pass");
+        bgfx::setViewMode(RENDER_PASS_COMPUTE, bgfx::ViewMode::Sequential);
         bgfx::setViewClear(RENDER_PASS_SOLID
             , BGFX_CLEAR_NONE
             , 0
@@ -431,6 +433,7 @@ private:
             , 0
         );
         bgfx::setViewName(RENDER_PASS_SOLID, "Solid Pass");
+        bgfx::setViewMode(RENDER_PASS_SOLID, bgfx::ViewMode::Sequential);
 		bgfx::setViewClear(RENDER_PASS_DEBUG
 			, BGFX_CLEAR_NONE
 			, 0
@@ -438,6 +441,7 @@ private:
 			, 0
 		);
         bgfx::setViewName(RENDER_PASS_DEBUG, "Debug Pass");
+        bgfx::setViewMode(RENDER_PASS_DEBUG, bgfx::ViewMode::Sequential);
         bgfx::setViewClear(RENDER_PASS_2DDEBUG
             , BGFX_CLEAR_NONE
             , 0
@@ -445,6 +449,7 @@ private:
             , 0
         );
         bgfx::setViewName(RENDER_PASS_2DDEBUG, "2D Debug Pass");
+        bgfx::setViewMode(RENDER_PASS_2DDEBUG, bgfx::ViewMode::Sequential);
 
         m_mesh = meshLoad(BUNNY_MESH_ASSET_PATH);
         
@@ -971,9 +976,11 @@ private:
 			//update the bunny instances
 			uint16_t instanceStride = 64;
 			const bgfx::InstanceDataBuffer* idb = bgfx::allocInstanceDataBuffer(TOTAL_GRID_COUNT, instanceStride);
+            const bgfx::InstanceDataBuffer* idb2 = bgfx::allocInstanceDataBuffer(TOTAL_GRID_COUNT, instanceStride);
 			if (NULL != idb)
 			{
 				uint8_t* data = idb->data;
+                uint8_t* data2 = idb2->data;
 
 				// Write instance data for 11x11 cubes.
 				for (uint32_t zz = 0, numInstances = 0; zz < INSTANCE_GIRD_SIZE && numInstances < idb->num; ++zz)
@@ -987,9 +994,12 @@ private:
                         mtx[13] = 0.0f;
 						mtx[14] = -15.0f + float(zz)*3.0f;
                         float* dst = (float*)data;
+                        float* dst2 = (float*)data2;
                         bx::mtxTranspose(dst, mtx);
+                        bx::mtxTranspose(dst2, mtx);
 
 						data += instanceStride;
+                        data2 += instanceStride;
 					}
 				}
 			}
@@ -1006,17 +1016,20 @@ private:
 
             uint64_t state = 0;
 
-			// set lighting buffers
-			bgfx::setBuffer(0, zBinBuffer, bgfx::Access::Read);
-			bgfx::setBuffer(1, lightGridBuffer, bgfx::Access::Read);
-			bgfx::setBuffer(2, lightListBuffer, bgfx::Access::Read);
-			bgfx::setBuffer(3, lightPositionBuffer, bgfx::Access::Read);
+            if (bgfx::isValid(ShaderParams[dbgShader].zfillProg)) {
+                // Set instance data buffer.
+                //bgfx::setInstanceDataBuffer(idb2);
+                //meshSubmit(m_mesh, RENDER_PASS_SOLID, ShaderParams[dbgShader].zfillProg, mTmp, BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
+            }
+            bgfx::setBuffer(0, zBinBuffer, bgfx::Access::Read);
+            bgfx::setBuffer(1, lightGridBuffer, bgfx::Access::Read);
+            bgfx::setBuffer(2, lightListBuffer, bgfx::Access::Read);
+            bgfx::setBuffer(3, lightPositionBuffer, bgfx::Access::Read);
             bgfx::setBuffer(4, enableCPUUpdateLightGrid ? lightGridBuffer : lightGridFatBuffer, bgfx::Access::Read);
-			// Set instance data buffer.
-			bgfx::setInstanceDataBuffer(idb);
-            meshSubmit(m_mesh, RENDER_PASS_SOLID, ShaderParams[dbgShader].zfillProg, mTmp, BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA);
+            // Set instance data buffer.
+            bgfx::setInstanceDataBuffer(idb);
             meshSubmit(m_mesh, RENDER_PASS_SOLID, ShaderParams[dbgShader].solidProg, mTmp, BGFX_STATE_RGB_WRITE
-                    | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_TEST_LEQUAL | BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA);
+                    | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_TEST_LEQUAL | BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
 
 			bool enableFullscreenQuad = bgfx::isValid(ShaderParams[dbgShader].fullscreenProg);
 			if (enableFullscreenQuad) {
