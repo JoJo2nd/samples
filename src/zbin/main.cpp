@@ -39,6 +39,7 @@ enum InputActions {
   IA_DrawBins,
 
   IA_DebugStats,
+  IA_MovingLights,
 
   IA_Shader,
   IA_ShaderPrev,
@@ -74,6 +75,7 @@ static const InputBinding s_inputBindings[] = {
   {entry::Key::KeyP, entry::Modifier::None, 0, cmd, &inputs[IA_CellDown]},
   {entry::Key::KeyU, entry::Modifier::None, 0, cmd, &inputs[IA_CellRowUp]},
   {entry::Key::KeyI, entry::Modifier::None, 0, cmd, &inputs[IA_CellRowDown]},
+  {entry::Key::KeyV, entry::Modifier::None, 0, cmd, &inputs[IA_MovingLights]},
 
   {entry::Key::KeyK, entry::Modifier::None, 0, cmd, &inputs[IA_BinUp]},
   {entry::Key::KeyL, entry::Modifier::None, 0, cmd, &inputs[IA_BinDown]},
@@ -269,6 +271,13 @@ struct LightInfo {
   float  pad;
 };
 
+struct LightInit {
+    vec3_t p;
+    float  radius;
+    vec3_t col;
+    float  r[3];
+};
+
 struct LightGridRange {
   uint16_t start;
   uint16_t count;
@@ -388,10 +397,12 @@ private:
 
   bgfx::Caps const* m_caps;
 
-  LightInfo* lights = nullptr; //[LIGHT_COUNT];
+  LightInit* lights = nullptr; //[LIGHT_COUNT];
   uint16_t*  grid = nullptr;
 
   uint32_t frameID = 0;
+
+  float  time = 0.f;
 
   uint32_t dbgCell = 0;
   uint32_t dbgBucket = 0;
@@ -404,6 +415,7 @@ private:
   bool dbgDrawLightsWire = false;
   bool dbgDrawZBin = false;
   bool dbgDebugStats = false;
+  bool dbgDebugMoveLights = true;
 
   void unloadAssetData(RunParams* data, uint32_t data_count) {
     for (uint32_t i = 0, n = data_count; i < n; ++i) {
@@ -500,7 +512,7 @@ private:
     csViewPrams = bgfx::createUniform("u_params", bgfx::UniformType::Vec4, 2);
     csLightData = bgfx::createUniform("u_lightData", bgfx::UniformType::Vec4);
 
-    lights = new LightInfo[LIGHT_COUNT];
+    lights = new LightInit[LIGHT_COUNT];
     vec3_t colours[7] = {
       {1.f, 0.f, 0.f},
       {0.f, 1.f, 0.f},
@@ -512,10 +524,13 @@ private:
     };
     for (uint32_t i = 0; i < LIGHT_COUNT; ++i) {
       lights[i].p.x = -15.5f + (rand() % (INSTANCE_GIRD_SIZE * 3));
-      lights[i].p.y = 1.5f;
+      lights[i].p.y = .5f;
       lights[i].p.z = -15.0f + (rand() % (INSTANCE_GIRD_SIZE * 3));
-      lights[i].radius = .8f;
+      lights[i].radius = (((float)rand() / RAND_MAX) * .75f) + .25f;
       lights[i].col = colours[rand() % 7];
+      lights[i].r[0] = ((float)rand() / RAND_MAX) * 10.f;
+      lights[i].r[1] = ((float)rand() / RAND_MAX) * 10.f;
+      lights[i].r[2] = ((float)rand() / RAND_MAX) * 10.f;
     }
 
     // Setup compute buffers
@@ -567,16 +582,29 @@ private:
 
   void zbinLights(LightInfo*          viewSpaceLights,
                   CameraParams const* cam,
-                  LightInfo*          lights,
+                  LightInit*          lights,
                   uint32_t            light_count,
                   uint32_t*           zbin,
                   float*              zstep) {
     rmt_ScopedCPUSample(zBin, 0);
     // need linear depth
-    for (uint32_t i = 0, n = light_count; i < n; ++i) {
-      bx::vec3MulMtx(viewSpaceLights[i].p.v, lights[i].p.v, cam->view);
-      viewSpaceLights[i].radius = lights[i].radius;
-      viewSpaceLights[i].col = lights[i].col;
+    float rot_mtx[16];
+    if (dbgDebugMoveLights) {
+      for (uint32_t i = 0, n = light_count; i < n; ++i) {
+        vec3_t t = { 0.f, 1.f, 0.f }, t2;
+        bx::mtxRotateXYZ(rot_mtx, lights[i].r[0]+time, lights[i].r[1]+time, lights[i].r[2]+time);
+        bx::vec3MulMtx(t2.v, t.v, rot_mtx);
+        vec3_add(&t, &lights[i].p, &t2);
+        bx::vec3MulMtx(viewSpaceLights[i].p.v, t.v, cam->view);
+        viewSpaceLights[i].radius = lights[i].radius;
+        viewSpaceLights[i].col = lights[i].col;
+      }
+    } else {
+      for (uint32_t i = 0, n = light_count; i < n; ++i) {
+        bx::vec3MulMtx(viewSpaceLights[i].p.v, lights[i].p.v, cam->view);
+        viewSpaceLights[i].radius = lights[i].radius;
+        viewSpaceLights[i].col = lights[i].col;
+      }
     }
     qsort(viewSpaceLights, light_count, sizeof(LightInfo), [](void const* vlhs, void const* vrhs) {
       LightInfo* lhs = (LightInfo*)vlhs;
@@ -598,10 +626,8 @@ private:
 
     // Note that low & high are swapped. shaders appears to read them as (low word, high word)
     uint32_t cur_l = 0, end_l = light_count;
-    while (cur_l < end_l && viewSpaceLights[cur_l].p.z < z_itr) {
-      ++cur_l;
-    }
     for (; cur_l < end_l; ++cur_l) {
+      if (viewSpaceLights[cur_l].p.z + viewSpaceLights[cur_l].radius < 0.f) continue;
       uint16_t min_z =
         (uint16_t)MIN((viewSpaceLights[cur_l].p.z - viewSpaceLights[cur_l].radius) / z_step, Z_BUCKETS - 1);
       uint16_t max_z =
@@ -944,6 +970,7 @@ private:
       if (inputs[IA_BinDown].rising) --dbgBucket;
       if (inputs[IA_DrawBins].rising) dbgDrawZBin = !dbgDrawZBin;
       if (inputs[IA_DebugStats].rising) dbgDebugStats = !dbgDebugStats;
+      if (inputs[IA_MovingLights].rising) dbgDebugMoveLights = !dbgDebugMoveLights;
       if (inputs[IA_Shader].rising) {
         dbgShader = (dbgShader + 1) % SOLID_PROGS;
       }
@@ -966,7 +993,7 @@ private:
       last = now;
       const double freq = double(bx::getHPFrequency());
       const double toMs = 1000.0 / freq;
-      const float  time = (float)((now) / double(bx::getHPFrequency()));
+      time = (float)((now) / double(bx::getHPFrequency()));
       const float  deltaTime = float(frameTime / freq);
 
       float view[16], iViewX[16], mTmp[16];
@@ -1167,11 +1194,21 @@ private:
         else
           ddSetWireframe(false);
         ddSetColor(0xFFFF00FF);
-        static uint32_t planestart = 0;
-        static uint32_t planecount = 6;
-        for (uint32_t i = 0; i < LIGHT_COUNT; ++i) {
-          Sphere ll = {lights[i].p.x, lights[i].p.y, lights[i].p.z, lights[i].radius};
-          ddDraw(ll);
+        float rot_mtx[16];
+        if (dbgDebugMoveLights) {
+          for (uint32_t i = 0, n = LIGHT_COUNT; i < n; ++i) {
+            vec3_t t = { 0.f, 1.f, 0.f }, t2;
+            bx::mtxRotateXYZ(rot_mtx, lights[i].r[0]+time, lights[i].r[1]+time, lights[i].r[2]+time);
+            bx::vec3MulMtx(t2.v, t.v, rot_mtx);
+            vec3_add(&t, &lights[i].p, &t2);
+            Sphere ll = {t.x, t.y, t.z, lights[i].radius};
+            ddDraw(ll);
+          }
+        } else {
+          for (uint32_t i = 0, n = LIGHT_COUNT; i < n; ++i) {
+            Sphere ll = {lights[i].p.x, lights[i].p.y, lights[i].p.z, lights[i].radius};
+            ddDraw(ll);
+          }
         }
         ddPop();
       }
