@@ -572,6 +572,13 @@ private:
   virtual int shutdown() {
     cameraDestroy();
 
+    bgfx::destroy(lightPositionBuffer);
+    bgfx::destroy(zBinBuffer);
+    bgfx::destroy(lightListBuffer);
+    bgfx::destroy(lightGridFatBuffer);
+
+    delete grid;
+
     meshUnload(m_mesh);
     unloadAssetData(ShaderParams, SOLID_PROGS);
     // Shutdown bgfx.

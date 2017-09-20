@@ -16,6 +16,7 @@ del /Q "%DATADEST%\*.*"
 
 call "%GEOMETRYC%" -f "%DATASRC%/mesh/bunny.obj" -o "%DATADEST%/bunny.mesh"
 call "%GEOMETRYC%" -f "%DATASRC%/mesh/orb.obj" -o "%DATADEST%/orb.mesh"
+call "%GEOMETRYC%" -f "../../data/assets/meshes/sponza_pbr.obj" -o "%DATADEST%/sponza_pbr.mesh"
 
 call "%SHADERC%" -f "%DATASRC%/shaders/vs.sc" %SHADER_INC% --type vertex -o "%DATADEST%/simple.vs" -p vs_5_0 --platform windows %DEBUG_SHADERS%
 call "%SHADERC%" -f "%DATASRC%/shaders/vs_postex.sc" %SHADER_INC% --type vertex -o "%DATADEST%/postex.vs" -p vs_5_0 --platform windows %DEBUG_SHADERS%
