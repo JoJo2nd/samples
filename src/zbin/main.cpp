@@ -272,10 +272,10 @@ struct LightInfo {
 };
 
 struct LightInit {
-    vec3_t p;
-    float  radius;
-    vec3_t col;
-    float  r[3];
+  vec3_t p;
+  float  radius;
+  vec3_t col;
+  float  r[3];
 };
 
 struct LightGridRange {
@@ -402,7 +402,7 @@ private:
 
   uint32_t frameID = 0;
 
-  float  time = 0.f;
+  float time = 0.f;
 
   uint32_t dbgCell = 0;
   uint32_t dbgBucket = 0;
@@ -598,8 +598,8 @@ private:
     float rot_mtx[16];
     if (dbgDebugMoveLights) {
       for (uint32_t i = 0, n = light_count; i < n; ++i) {
-        vec3_t t = { 0.f, 1.f, 0.f }, t2;
-        bx::mtxRotateXYZ(rot_mtx, lights[i].r[0]+time, lights[i].r[1]+time, lights[i].r[2]+time);
+        vec3_t t = {0.f, 1.f, 0.f}, t2;
+        bx::mtxRotateXYZ(rot_mtx, lights[i].r[0] + time, lights[i].r[1] + time, lights[i].r[2] + time);
         bx::vec3MulMtx(t2.v, t.v, rot_mtx);
         vec3_add(&t, &lights[i].p, &t2);
         bx::vec3MulMtx(viewSpaceLights[i].p.v, t.v, cam->view);
@@ -1001,7 +1001,7 @@ private:
       const double freq = double(bx::getHPFrequency());
       const double toMs = 1000.0 / freq;
       time = (float)((now) / double(bx::getHPFrequency()));
-      const float  deltaTime = float(frameTime / freq);
+      const float deltaTime = float(frameTime / freq);
 
       float view[16], iViewX[16], mTmp[16];
       cameraUpdate(deltaTime * .25f, mouseState);
@@ -1204,8 +1204,8 @@ private:
         float rot_mtx[16];
         if (dbgDebugMoveLights) {
           for (uint32_t i = 0, n = LIGHT_COUNT; i < n; ++i) {
-            vec3_t t = { 0.f, 1.f, 0.f }, t2;
-            bx::mtxRotateXYZ(rot_mtx, lights[i].r[0]+time, lights[i].r[1]+time, lights[i].r[2]+time);
+            vec3_t t = {0.f, 1.f, 0.f}, t2;
+            bx::mtxRotateXYZ(rot_mtx, lights[i].r[0] + time, lights[i].r[1] + time, lights[i].r[2] + time);
             bx::vec3MulMtx(t2.v, t.v, rot_mtx);
             vec3_add(&t, &lights[i].p, &t2);
             Sphere ll = {t.x, t.y, t.z, lights[i].radius};

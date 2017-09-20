@@ -274,10 +274,10 @@ struct LightInfo {
 };
 
 struct LightInit {
-    vec3_t p;
-    float  radius;
-    vec3_t col;
-    float  r[3];
+  vec3_t p;
+  float  radius;
+  vec3_t col;
+  float  r[3];
 };
 
 struct LightGridRange {
@@ -384,7 +384,7 @@ private:
   entry::MouseState mouseState;
   float             cameraPos[4] = {0};
 
-  util::Mesh m_mesh;
+  util::Mesh          m_mesh;
   util::MeshMaterials m_materials;
 
   bgfx::UniformHandle timeUniform;
@@ -411,7 +411,7 @@ private:
 
   uint32_t frameID = 0;
 
-  float  time = 0.f;
+  float time = 0.f;
 
   uint32_t dbgCell = 0;
   uint32_t dbgBucket = 0;
@@ -512,29 +512,27 @@ private:
     bgfx::setViewName(RENDER_PASS_2DDEBUG, "2D Debug Pass");
     bgfx::setViewMode(RENDER_PASS_2DDEBUG, bgfx::ViewMode::Sequential);
 
-	bx::FileReaderI* reader = entry::getFileReader();
-	if (bx::open(reader, SPONZA_MESH_ASSET_PATH))
-	{
-		util::mesh_load(&m_mesh, reader);
-		bx::close(reader);
-	}
-  	if (bx::open(reader, SPONZA_MATERIAL_ASSET_PATH))
-  	{
-  		util::material_load(&m_materials, reader);
-  	}
+    bx::FileReaderI* reader = entry::getFileReader();
+    if (bx::open(reader, SPONZA_MESH_ASSET_PATH)) {
+      util::mesh_load(&m_mesh, reader);
+      bx::close(reader);
+    }
+    if (bx::open(reader, SPONZA_MATERIAL_ASSET_PATH)) {
+      util::material_load(&m_materials, reader);
+    }
     mesh_bind_materials(&m_mesh, &m_materials);
 
     loadAssetData(ShaderParams, SOLID_PROGS);
 
-	float ab_min[3] = { FLT_MAX, FLT_MAX, FLT_MAX };
-	float ab_max[3] = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
+    float ab_min[3] = {FLT_MAX, FLT_MAX, FLT_MAX};
+    float ab_max[3] = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
 
-	for (size_t i = 0, n = m_mesh.m_groups.size(); i < n; ++i) {
-		for (uint32_t j = 0; j < 3; ++j) {
-			ab_min[j] = MIN(m_mesh.m_groups[i].m_aabb.m_min[j]*GLOBAL_SCALE, ab_min[j]);
-			ab_max[j] = MAX(m_mesh.m_groups[i].m_aabb.m_max[j]*GLOBAL_SCALE, ab_max[j]);
-		}
-	}
+    for (size_t i = 0, n = m_mesh.m_groups.size(); i < n; ++i) {
+      for (uint32_t j = 0; j < 3; ++j) {
+        ab_min[j] = MIN(m_mesh.m_groups[i].m_aabb.m_min[j] * GLOBAL_SCALE, ab_min[j]);
+        ab_max[j] = MAX(m_mesh.m_groups[i].m_aabb.m_max[j] * GLOBAL_SCALE, ab_max[j]);
+      }
+    }
 
     timeUniform = bgfx::createUniform("u_gameTime", bgfx::UniformType::Vec4);
     lightingParamsUniform = bgfx::createUniform("u_bucketParams", bgfx::UniformType::Vec4);
@@ -557,15 +555,13 @@ private:
       {0.f, 1.f, 1.f},
       {1.f, 1.f, 1.f},
     };
-	float range[3] = {
-		(ab_max[0] - ab_min[0]),
-		(ab_max[1] - ab_min[1]),
-		(ab_max[2] - ab_min[2]),
-	};
+    float range[3] = {
+      (ab_max[0] - ab_min[0]), (ab_max[1] - ab_min[1]), (ab_max[2] - ab_min[2]),
+    };
     for (uint32_t i = 0; i < LIGHT_COUNT; ++i) {
-      lights[i].p.x = (ab_min[0]) + ((float)rand() / RAND_MAX)*range[0];
-      lights[i].p.y = (ab_min[1]) + ((float)rand() / RAND_MAX)*range[1];
-      lights[i].p.z = (ab_min[2]) + ((float)rand() / RAND_MAX)*range[2];
+      lights[i].p.x = (ab_min[0]) + ((float)rand() / RAND_MAX) * range[0];
+      lights[i].p.y = (ab_min[1]) + ((float)rand() / RAND_MAX) * range[1];
+      lights[i].p.z = (ab_min[2]) + ((float)rand() / RAND_MAX) * range[2];
       lights[i].radius = (((float)rand() / RAND_MAX) * 10.f) + 10.f;
       lights[i].col = colours[rand() % 7];
       lights[i].r[0] = (((float)rand() / RAND_MAX) * 5.f) + 5.f;
@@ -631,8 +627,8 @@ private:
     float rot_mtx[16];
     if (dbgDebugMoveLights) {
       for (uint32_t i = 0, n = light_count; i < n; ++i) {
-        vec3_t t = { 0.f, 1.f, 0.f }, t2;
-        bx::mtxRotateXYZ(rot_mtx, lights[i].r[0]+time, lights[i].r[1]+time, lights[i].r[2]+time);
+        vec3_t t = {0.f, 1.f, 0.f}, t2;
+        bx::mtxRotateXYZ(rot_mtx, lights[i].r[0] + time, lights[i].r[1] + time, lights[i].r[2] + time);
         bx::vec3MulMtx(t2.v, t.v, rot_mtx);
         vec3_add(&t, &lights[i].p, &t2);
         bx::vec3MulMtx(viewSpaceLights[i].p.v, t.v, cam->view);
@@ -1034,7 +1030,7 @@ private:
       const double freq = double(bx::getHPFrequency());
       const double toMs = 1000.0 / freq;
       time = (float)((now) / double(bx::getHPFrequency()));
-      const float  deltaTime = float(frameTime / freq);
+      const float deltaTime = float(frameTime / freq);
 
       float view[16], iViewX[16], mTmp[16];
       cameraUpdate(deltaTime, mouseState);
@@ -1128,7 +1124,7 @@ private:
                        1);
       }
       // update the bunny instances
-      uint16_t                        instanceStride = 64;
+      uint16_t instanceStride = 64;
 
       // Set view 0 default viewport.
       bgfx::setViewRect(RENDER_PASS_COMPUTE, 0, 0, m_width, m_height);
@@ -1149,30 +1145,33 @@ private:
       handles[MATERIAL_METALLIC] = metalTex;
       handles[MATERIAL_MASK] = maskTex;
 
-	  bgfx::DynamicVertexBufferHandle buffer[5] = {
-		zBinBuffer,
-		lightGridBuffer,
-		lightListBuffer,
-		lightPositionBuffer,
-		enableCPUUpdateLightGrid ? lightGridBuffer : lightGridFatBuffer,
-	  };
+      bgfx::DynamicVertexBufferHandle buffer[5] = {
+        zBinBuffer,
+        lightGridBuffer,
+        lightListBuffer,
+        lightPositionBuffer,
+        enableCPUUpdateLightGrid ? lightGridBuffer : lightGridFatBuffer,
+      };
 
       if (bgfx::isValid(ShaderParams[dbgShader].zfillProg)) {
         // Set instance data buffer.
         mesh_submit(&m_mesh,
-                   RENDER_PASS_SOLID,
-                   ShaderParams[dbgShader].zfillProg,
-                   mTmp,
-                   BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA,
-                    handles, buffer);
+                    RENDER_PASS_SOLID,
+                    ShaderParams[dbgShader].zfillProg,
+                    mTmp,
+                    BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA,
+                    handles,
+                    buffer);
       }
       // Set instance data buffer.
       mesh_submit(&m_mesh,
-                 RENDER_PASS_SOLID,
-                 ShaderParams[dbgShader].solidProg,
-                 mTmp,
-                 BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_TEST_LEQUAL | BGFX_STATE_DEPTH_WRITE |
-                   BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA, handles, buffer);
+                  RENDER_PASS_SOLID,
+                  ShaderParams[dbgShader].solidProg,
+                  mTmp,
+                  BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_TEST_LEQUAL |
+                    BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA,
+                  handles,
+                  buffer);
 
       bool enableFullscreenQuad = bgfx::isValid(ShaderParams[dbgShader].fullscreenProg);
       if (enableFullscreenQuad) {
@@ -1221,8 +1220,8 @@ private:
         float rot_mtx[16];
         if (dbgDebugMoveLights) {
           for (uint32_t i = 0, n = LIGHT_COUNT; i < n; ++i) {
-            vec3_t t = { 0.f, 1.f, 0.f }, t2;
-            bx::mtxRotateXYZ(rot_mtx, lights[i].r[0]+time, lights[i].r[1]+time, lights[i].r[2]+time);
+            vec3_t t = {0.f, 1.f, 0.f}, t2;
+            bx::mtxRotateXYZ(rot_mtx, lights[i].r[0] + time, lights[i].r[1] + time, lights[i].r[2] + time);
             bx::vec3MulMtx(t2.v, t.v, rot_mtx);
             vec3_add(&t, &lights[i].p, &t2);
             Sphere ll = {t.x, t.y, t.z, lights[i].radius};
