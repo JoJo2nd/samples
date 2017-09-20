@@ -1,10 +1,13 @@
 
-#pragma once
+#ifndef COMMON_DEFINES_H__
+#define COMMON_DEFINES_H__
 
 #define RENDER_PASS_COMPUTE (0)
-#define RENDER_PASS_SOLID (1)
-#define RENDER_PASS_DEBUG (2)
-#define RENDER_PASS_2DDEBUG (3)
+#define RENDER_PASS_ZPREPASS (1)
+#define RENDER_PASS_SOLID (2)
+#define RENDER_PASS_TONEMAP (3)
+#define RENDER_PASS_DEBUG (4)
+#define RENDER_PASS_2DDEBUG (5)
 
 #define INSTANCE_GIRD_SIZE (10)
 #define TOTAL_GRID_COUNT (INSTANCE_GIRD_SIZE * INSTANCE_GIRD_SIZE)
@@ -36,6 +39,8 @@
 #define FS_FSDEBUG_WCS_ASSET_PATH ("data/fs_debug_wcs.ps")
 #define FS_FSDEBUG_WOCS_ASSET_PATH ("data/fs_debug_wocs.ps")
 
+#define TONEMAP_ASSET_PATH ("data/tonemap.ps")
+
 #define VS_Z_FILL ("data/zfill.vs")
 #define PS_Z_FILL ("data/zfill.ps")
 
@@ -56,3 +61,5 @@
 #ifndef CS_LIGHT_CULL
 #define CS_LIGHT_CULL (0)
 #endif
+
+#endif // COMMON_DEFINES_H__

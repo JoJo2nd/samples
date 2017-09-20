@@ -8,7 +8,8 @@ set TEXTUREC=../../external/bgfx/.build/win64_vs2015/bin/texturecRelease
 set GEOMETRYC=../../external/bgfx/.build/win64_vs2015/bin/geometrycRelease
 set SHADERC=../../external/bgfx/.build/win64_vs2015/bin/shadercRelease
 set SHADER_INC=-i ../../external/bgfx/src
-set DEBUG_SHADERS=--debug
+rem why does this need --debug too prevent flickering???
+rem set DEBUG_SHADERS=--debug
 
 if not exist "%DATADEST%" mkdir "%DATADEST%"
 
@@ -32,6 +33,8 @@ call "%SHADERC%" -f "%DATASRC%/shaders/light_grid.cc" %SHADER_INC% --type comput
 
 call "%SHADERC%" -f "%DATASRC%/shaders/vs_zfill.sc" %SHADER_INC% --type vertex -o "%DATADEST%/zfill.vs" -p vs_5_0 --platform windows %DEBUG_SHADERS%
 call "%SHADERC%" -f "%DATASRC%/shaders/ps_zfill.sc" %SHADER_INC% --type fragment -o "%DATADEST%/zfill.ps" -p ps_5_0 --platform windows %DEBUG_SHADERS%
+
+call "%SHADERC%" -f "%DATASRC%/shaders/tonemap.sc" %SHADER_INC% --type fragment -o "%DATADEST%/tonemap.ps" -p ps_5_0 --platform windows %DEBUG_SHADERS%
 
 del /Q "%DATADEST%\*.hlsl"
 

@@ -2,6 +2,7 @@ $input v_pos, v_wpos, v_view, v_normal, v_color0, v_texcoord0
 
 #include "../../../common/common.sh"
 #include "../../common_defines.h"
+#include "ACES.sh"
 
 uniform vec4 u_gameTime;
 uniform vec4 u_bucketParams; // z bin bucket size, light grid size, light grid pitch

@@ -387,6 +387,8 @@ private:
   util::Mesh          m_mesh;
   util::MeshMaterials m_materials;
 
+  bgfx::ProgramHandle tonemapProg;
+
   bgfx::UniformHandle timeUniform;
   bgfx::UniformHandle lightingParamsUniform;
   bgfx::UniformHandle csViewPrams;
@@ -403,6 +405,11 @@ private:
   bgfx::DynamicVertexBufferHandle lightGridBuffer;
   bgfx::DynamicVertexBufferHandle lightListBuffer;
   bgfx::DynamicVertexBufferHandle lightGridFatBuffer;
+
+  bgfx::FrameBufferHandle zPrePassTarget;
+  bgfx::FrameBufferHandle mainTarget;
+
+  bgfx::TextureHandle colourTarget;
 
   bgfx::Caps const* m_caps;
 
@@ -441,6 +448,8 @@ private:
         data[i].csLightCull = BGFX_INVALID_HANDLE;
       }
     }
+    bgfx::destroy(tonemapProg);
+    tonemapProg = BGFX_INVALID_HANDLE;
   }
 
   void loadAssetData(RunParams* data, uint32_t data_count) {
@@ -466,6 +475,10 @@ private:
         data[i].csLightCull = bgfx::createProgram(bgfx::createShader(cs), true);
       }
     }
+
+    bgfx::Memory const* vs = loadMem(VS_DEBUG_ASSET_PATH);
+    bgfx::Memory const* ps = loadMem(TONEMAP_ASSET_PATH);
+    tonemapProg = bgfx::createProgram(bgfx::createShader(vs), bgfx::createShader(ps), true);
   }
 
   void init(int32_t _argc, const char* const* _argv, uint32_t _width, uint32_t _height) {
@@ -497,20 +510,6 @@ private:
 
     // Enable debug text.
     bgfx::setDebug(m_debug);
-
-    // Set view 0 clear state.
-    bgfx::setViewClear(RENDER_PASS_COMPUTE, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303030ff, 1.0f, 0);
-    bgfx::setViewName(RENDER_PASS_COMPUTE, "Compute Pass");
-    bgfx::setViewMode(RENDER_PASS_COMPUTE, bgfx::ViewMode::Sequential);
-    bgfx::setViewClear(RENDER_PASS_SOLID, BGFX_CLEAR_NONE, 0, 1.0f, 0);
-    bgfx::setViewName(RENDER_PASS_SOLID, "Solid Pass");
-    bgfx::setViewMode(RENDER_PASS_SOLID, bgfx::ViewMode::Sequential);
-    bgfx::setViewClear(RENDER_PASS_DEBUG, BGFX_CLEAR_NONE, 0, 1.0f, 0);
-    bgfx::setViewName(RENDER_PASS_DEBUG, "Debug Pass");
-    bgfx::setViewMode(RENDER_PASS_DEBUG, bgfx::ViewMode::Sequential);
-    bgfx::setViewClear(RENDER_PASS_2DDEBUG, BGFX_CLEAR_NONE, 0, 1.0f, 0);
-    bgfx::setViewName(RENDER_PASS_2DDEBUG, "2D Debug Pass");
-    bgfx::setViewMode(RENDER_PASS_2DDEBUG, bgfx::ViewMode::Sequential);
 
     bx::FileReaderI* reader = entry::getFileReader();
     if (bx::open(reader, SPONZA_MESH_ASSET_PATH)) {
@@ -546,14 +545,15 @@ private:
     maskTex = bgfx::createUniform("s_mask", bgfx::UniformType::Int1);
 
     lights = new LightInit[LIGHT_COUNT];
+    float scale = 4.f;
     vec3_t colours[7] = {
-      {1.f, 0.f, 0.f},
-      {0.f, 1.f, 0.f},
-      {1.f, 1.f, 0.f},
-      {0.f, 0.f, 1.f},
-      {1.f, 0.f, 1.f},
-      {0.f, 1.f, 1.f},
-      {1.f, 1.f, 1.f},
+      {1.f*scale, 0.f*scale, 0.f*scale},
+      {0.f*scale, 1.f*scale, 0.f*scale},
+      {1.f*scale, 1.f*scale, 0.f*scale},
+      {0.f*scale, 0.f*scale, 1.f*scale},
+      {1.f*scale, 0.f*scale, 1.f*scale},
+      {0.f*scale, 1.f*scale, 1.f*scale},
+      {1.f*scale, 1.f*scale, 1.f*scale},
     };
     float range[3] = {
       (ab_max[0] - ab_min[0]), (ab_max[1] - ab_min[1]), (ab_max[2] - ab_min[2]),
@@ -599,6 +599,39 @@ private:
                                                         BGFX_BUFFER_COMPUTE_TYPE_UINT);
 
     grid = new uint16_t[LIGHT_GRID_SPACE * sizeof(uint16_t) * MAX_LIGHT_GRID_COUNT];
+
+	zPrePassTarget = bgfx::createFrameBuffer(bgfx::BackbufferRatio::Equal, bgfx::TextureFormat::D32F);
+	// BGFX can handle sRGB render targets, so use a 16bit float and resolve out end frame
+	colourTarget = bgfx::createTexture2D(bgfx::BackbufferRatio::Equal, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_RT);
+	bgfx::Attachment main_attachments[2] = {
+		{ colourTarget, 0, 0},
+		{ bgfx::getTexture(zPrePassTarget, 0), 0, 0 }
+	};
+	mainTarget = bgfx::createFrameBuffer(2, main_attachments);
+
+	// Set view 0 clear state.
+	bgfx::setViewClear(RENDER_PASS_COMPUTE, BGFX_CLEAR_NONE , 0x303030ff, 1.0f, 0);
+	bgfx::setViewName(RENDER_PASS_COMPUTE, "Compute Pass");
+	bgfx::setViewMode(RENDER_PASS_COMPUTE, bgfx::ViewMode::Sequential);
+	bgfx::setViewClear(RENDER_PASS_ZPREPASS, BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
+	bgfx::setViewName(RENDER_PASS_ZPREPASS, "Z PrePass");
+	bgfx::setViewMode(RENDER_PASS_ZPREPASS, bgfx::ViewMode::Sequential);
+	bgfx::setViewFrameBuffer(RENDER_PASS_ZPREPASS, zPrePassTarget);
+	bgfx::setViewClear(RENDER_PASS_SOLID, BGFX_CLEAR_COLOR, 0, 1.0f, 0);
+	bgfx::setViewName(RENDER_PASS_SOLID, "Solid Pass");
+	bgfx::setViewMode(RENDER_PASS_SOLID, bgfx::ViewMode::Sequential);
+	bgfx::setViewFrameBuffer(RENDER_PASS_SOLID, mainTarget);
+  bgfx::setViewClear(RENDER_PASS_TONEMAP, BGFX_CLEAR_NONE, 0, 1.0f, 0);
+  bgfx::setViewName(RENDER_PASS_TONEMAP, "Tonemap Pass");
+  bgfx::setViewMode(RENDER_PASS_TONEMAP, bgfx::ViewMode::Sequential);
+	bgfx::setViewClear(RENDER_PASS_DEBUG, BGFX_CLEAR_NONE, 0, 1.0f, 0);
+	bgfx::setViewName(RENDER_PASS_DEBUG, "Debug Pass");
+	bgfx::setViewMode(RENDER_PASS_DEBUG, bgfx::ViewMode::Sequential);
+	bgfx::setViewFrameBuffer(RENDER_PASS_DEBUG, mainTarget);
+	bgfx::setViewClear(RENDER_PASS_2DDEBUG, BGFX_CLEAR_NONE, 0, 1.0f, 0);
+	bgfx::setViewName(RENDER_PASS_2DDEBUG, "2D Debug Pass");
+	bgfx::setViewMode(RENDER_PASS_2DDEBUG, bgfx::ViewMode::Sequential);
+	bgfx::setViewFrameBuffer(RENDER_PASS_2DDEBUG, mainTarget);
 
     ddInit();
 
@@ -834,19 +867,15 @@ private:
         plane_build(frustum + 5, &nbr, &fbl, &fbr); // bottom
 
         if (grid_idx == dbgCell) {
-          // for (uint32_t pp = 0; pp < 6; ++pp) {
-          //  bgfx::dbgTextPrintf(0, 30 + pp, 0x6f, "%f, %f, %f, %f", frustum[pp].n.x, frustum[pp].n.y, frustum[pp].n.z,
-          //  frustum[pp].d);
-          //}
-          bgfx::dbgTextPrintf(0, 30, 0x6f, "%f, %f, %f", ntl.x, ntl.y, ntl.z);
-          bgfx::dbgTextPrintf(0, 31, 0x6f, "%f, %f, %f", ntr.x, ntr.y, ntr.z);
-          bgfx::dbgTextPrintf(0, 32, 0x6f, "%f, %f, %f", nbl.x, nbl.y, nbl.z);
-          bgfx::dbgTextPrintf(0, 33, 0x6f, "%f, %f, %f", nbr.x, nbr.y, nbr.z);
-
-          bgfx::dbgTextPrintf(0, 35, 0x6f, "%f, %f, %f", ftl.x, ftl.y, ftl.z);
-          bgfx::dbgTextPrintf(0, 36, 0x6f, "%f, %f, %f", ftr.x, ftr.y, ftr.z);
-          bgfx::dbgTextPrintf(0, 37, 0x6f, "%f, %f, %f", fbl.x, fbl.y, fbl.z);
-          bgfx::dbgTextPrintf(0, 38, 0x6f, "%f, %f, %f", fbr.x, fbr.y, fbr.z);
+          // bgfx::dbgTextPrintf(0, 30, 0x6f, "%f, %f, %f", ntl.x, ntl.y, ntl.z);
+          // bgfx::dbgTextPrintf(0, 31, 0x6f, "%f, %f, %f", ntr.x, ntr.y, ntr.z);
+          // bgfx::dbgTextPrintf(0, 32, 0x6f, "%f, %f, %f", nbl.x, nbl.y, nbl.z);
+          // bgfx::dbgTextPrintf(0, 33, 0x6f, "%f, %f, %f", nbr.x, nbr.y, nbr.z);
+		  // 
+          // bgfx::dbgTextPrintf(0, 35, 0x6f, "%f, %f, %f", ftl.x, ftl.y, ftl.z);
+          // bgfx::dbgTextPrintf(0, 36, 0x6f, "%f, %f, %f", ftr.x, ftr.y, ftr.z);
+          // bgfx::dbgTextPrintf(0, 37, 0x6f, "%f, %f, %f", fbl.x, fbl.y, fbl.z);
+          // bgfx::dbgTextPrintf(0, 38, 0x6f, "%f, %f, %f", fbr.x, fbr.y, fbr.z);
         }
 
         for (uint32_t l = 0; l < light_count; ++l) {
@@ -930,39 +959,6 @@ private:
     vec3_scale(&vfright, &cam->right, vf_width * grid_w * 2.f);
     vec3_scale(&vfup2, &cam->up, vf_height);
     vec3_scale(&vfright2, &cam->right, vf_width);
-
-    if (dbgLightGrid) {
-      /*
-      Sphere disk;
-      disk.m_radius = grid_min;
-      grid_idx = 0;
-      for (uint32_t y = 0; y < m_height; y += GRID_SIZE) {
-          uint32_t yy = y / GRID_SIZE;
-          // Get to our initial starting position of the frustum.
-          vec3_add(&v_near_c, &ws_cam_pos, &vnear);
-          vec3_sub(&v_near_c, &vnright2);
-          vec3_sub(&v_near_c, &vnup2);
-          vec3_scale(&vt, &vnup, (float)yy);
-          vec3_add(&v_near_c, &vt);
-          vec3_scale(&vt, &cam->up, vn_height*grid_h);
-          vec3_add(&v_near_c, &vt);
-          vec3_scale(&vt, &cam->right, vn_width*grid_w);
-          vec3_add(&v_near_c, &vt);
-
-          for (uint32_t x = 0; x < m_width; x += GRID_SIZE, ++grid_idx) {
-              uint32_t xx = x / GRID_SIZE;
-
-              uint16_t count = 0;// (uint16_t)(255 * (grid[(yy*pitch + xx)*MAX_LIGHT_GRID_COUNT].count / (float)5));
-              count = count > 255 ? 255 : count;
-              memcpy(disk.m_center, v_near_c.v, sizeof(float) * 3);
-              ddSetColor(((count > 0 ? 0xFF : 0x00) << 24) | ((count & 0xFF)));
-              if (grid_idx == dbgCell)
-                  ddDraw(disk);
-              vec3_add(&v_near_c, &vnright);
-          }
-      }
-      */
-    }
 
     ddPop();
 
@@ -1129,12 +1125,20 @@ private:
       // Set view 0 default viewport.
       bgfx::setViewRect(RENDER_PASS_COMPUTE, 0, 0, m_width, m_height);
       bgfx::setViewTransform(RENDER_PASS_COMPUTE, view, proj);
+	  bgfx::setViewRect(RENDER_PASS_ZPREPASS, 0, 0, m_width, m_height);
+	  bgfx::setViewTransform(RENDER_PASS_ZPREPASS, view, proj);
       bgfx::setViewRect(RENDER_PASS_SOLID, 0, 0, m_width, m_height);
       bgfx::setViewTransform(RENDER_PASS_SOLID, view, proj);
+    bgfx::setViewRect(RENDER_PASS_TONEMAP, 0, 0, m_width, m_height);
+    bgfx::setViewTransform(RENDER_PASS_TONEMAP, idt, orthoProj);
       bgfx::setViewRect(RENDER_PASS_DEBUG, 0, 0, m_width, m_height);
       bgfx::setViewTransform(RENDER_PASS_DEBUG, view, proj);
       bgfx::setViewRect(RENDER_PASS_2DDEBUG, 0, 0, m_width, m_height);
       bgfx::setViewTransform(RENDER_PASS_2DDEBUG, idt, orthoProj);
+
+	  bgfx::setViewFrameBuffer(RENDER_PASS_ZPREPASS, zPrePassTarget);
+	  bgfx::setViewFrameBuffer(RENDER_PASS_SOLID, mainTarget);
+    // The remaining passes render to the back buffer
 
       uint64_t state = 0;
 
@@ -1156,7 +1160,7 @@ private:
       if (bgfx::isValid(ShaderParams[dbgShader].zfillProg)) {
         // Set instance data buffer.
         mesh_submit(&m_mesh,
-                    RENDER_PASS_SOLID,
+                    RENDER_PASS_ZPREPASS,
                     ShaderParams[dbgShader].zfillProg,
                     mTmp,
                     BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA,
@@ -1186,6 +1190,12 @@ private:
         screenSpaceQuad((float)m_width, (float)m_height, s_texelHalf, m_caps->originBottomLeft);
         bgfx::submit(RENDER_PASS_2DDEBUG, ShaderParams[dbgShader].fullscreenProg);
       }
+
+      //Tonemap pass
+      bgfx::setTexture(0, baseTex, colourTarget);
+      bgfx::setState(BGFX_STATE_RGB_WRITE | BGFX_STATE_MSAA);
+      screenSpaceQuad((float)m_width, (float)m_height, s_texelHalf, m_caps->originBottomLeft);
+      bgfx::submit(RENDER_PASS_TONEMAP, tonemapProg);
 
       // Use debug font to print information about this example.
       if (dbgDebugStats) {

@@ -43,7 +43,7 @@ void material_load(MeshMaterials* m, bx::FileReaderI* reader) {
 		m->materials[i].flags = io_mat[i].flags;
 		if (io_mat[i].flags & MATERIAL_BASE_FLAG) {
 			FIXUP_TEXTURE_PATH(io_mat[i].baseOffset);
-			m->materials[i].base = loadTexture(buf);
+			m->materials[i].base = loadTexture(buf, BGFX_TEXTURE_SRGB);
 		}
 		if (io_mat[i].flags & MATERIAL_METALLIC_FLAG) {
 			FIXUP_TEXTURE_PATH(io_mat[i].metallicOffset);
