@@ -13,6 +13,8 @@
 #include <math.h>
 #include "../common/debugdraw/debugdraw.h"
 #include "../common/debugdraw/debugdraw.cpp"
+#include "../common/imgui/imgui.h"
+//#include "../common/imgui/imgui.cpp"
 #include <assert.h>
 #include "common_util.h"
 //#include "Remotery.h"
@@ -22,74 +24,6 @@
 #include "bx/readerwriter.h"
 
 static float s_texelHalf = 0.0f;
-
-enum InputActions {
-  IA_ToggleLightGrid,
-  IA_ToggleLightGridFrustum,
-  IA_ToggleFrustumUpdate,
-  IA_ToggleDebugLights,
-  IA_ToggleDebugLightsWire,
-
-  IA_CellUp,
-  IA_CellRowUp,
-  IA_CellDown,
-  IA_CellRowDown,
-
-  IA_BinUp,
-  IA_BinDown,
-
-  IA_DrawBins,
-
-  IA_DebugStats,
-  IA_MovingLights,
-
-  IA_Shader,
-  IA_ShaderPrev,
-
-  IA_ShaderReload,
-
-  IA_Max
-};
-
-struct InputState {
-  bool     state;
-  bool     down;
-  bool     rising;
-  bool     repeat;
-  bool     falling;
-  uint32_t frame;
-};
-
-InputState inputs[IA_Max];
-
-static void cmd(const void* _userData) {
-  InputState* is = (InputState*)_userData;
-  is->state = true;
-}
-
-static const InputBinding s_inputBindings[] = {
-  {entry::Key::Key1, entry::Modifier::None, 0, cmd, &inputs[IA_ToggleLightGrid]},
-  {entry::Key::Key2, entry::Modifier::None, 0, cmd, &inputs[IA_ToggleLightGridFrustum]},
-  {entry::Key::Key3, entry::Modifier::None, 0, cmd, &inputs[IA_ToggleFrustumUpdate]},
-  {entry::Key::Key4, entry::Modifier::None, 0, cmd, &inputs[IA_ToggleDebugLights]},
-  {entry::Key::Key5, entry::Modifier::None, 0, cmd, &inputs[IA_ToggleDebugLightsWire]},
-  {entry::Key::KeyO, entry::Modifier::None, 0, cmd, &inputs[IA_CellUp]},
-  {entry::Key::KeyP, entry::Modifier::None, 0, cmd, &inputs[IA_CellDown]},
-  {entry::Key::KeyU, entry::Modifier::None, 0, cmd, &inputs[IA_CellRowUp]},
-  {entry::Key::KeyI, entry::Modifier::None, 0, cmd, &inputs[IA_CellRowDown]},
-  {entry::Key::KeyV, entry::Modifier::None, 0, cmd, &inputs[IA_MovingLights]},
-
-  {entry::Key::KeyK, entry::Modifier::None, 0, cmd, &inputs[IA_BinUp]},
-  {entry::Key::KeyL, entry::Modifier::None, 0, cmd, &inputs[IA_BinDown]},
-  {entry::Key::KeyR, entry::Modifier::None, 0, cmd, &inputs[IA_DebugStats]},
-  {entry::Key::KeyZ, entry::Modifier::None, 0, cmd, &inputs[IA_DrawBins]},
-  {entry::Key::KeyN, entry::Modifier::None, 0, cmd, &inputs[IA_Shader]},
-  {entry::Key::KeyB, entry::Modifier::None, 0, cmd, &inputs[IA_ShaderPrev]},
-
-  {entry::Key::KeyG, entry::Modifier::None, 0, cmd, &inputs[IA_ShaderReload]},
-
-
-  INPUT_BINDING_END};
 
 struct PosTexCoord0Vertex {
   float m_x;
@@ -387,29 +321,39 @@ private:
   util::Mesh          m_mesh;
   util::MeshMaterials m_materials;
 
-  bgfx::ProgramHandle tonemapProg;
+  bgfx::ProgramHandle logLuminanceAvProg = BGFX_INVALID_HANDLE;
+  bgfx::ProgramHandle tonemapProg = BGFX_INVALID_HANDLE;
+  bgfx::ProgramHandle luminancePixelProg = BGFX_INVALID_HANDLE;
 
   bgfx::UniformHandle timeUniform;
+  bgfx::UniformHandle sunlightUniform;
   bgfx::UniformHandle lightingParamsUniform;
   bgfx::UniformHandle csViewPrams;
   bgfx::UniformHandle csLightData;
+  bgfx::UniformHandle exposureParamsUniform;
+  bgfx::UniformHandle offsetUniform;
 
   bgfx::UniformHandle baseTex;
   bgfx::UniformHandle normalTex;
   bgfx::UniformHandle roughTex;
   bgfx::UniformHandle metalTex;
   bgfx::UniformHandle maskTex;
+  bgfx::UniformHandle luminanceTex;
 
   bgfx::DynamicVertexBufferHandle lightPositionBuffer;
   bgfx::DynamicVertexBufferHandle zBinBuffer;
   bgfx::DynamicVertexBufferHandle lightGridBuffer;
   bgfx::DynamicVertexBufferHandle lightListBuffer;
   bgfx::DynamicVertexBufferHandle lightGridFatBuffer;
+  bgfx::DynamicVertexBufferHandle workingLuminanceBuffer;
+  bgfx::DynamicVertexBufferHandle averageLuminanceBuffer;
 
   bgfx::FrameBufferHandle zPrePassTarget;
   bgfx::FrameBufferHandle mainTarget;
+  bgfx::FrameBufferHandle luminanceTargets[16];
 
   bgfx::TextureHandle colourTarget;
+  bgfx::TextureHandle luminanceMips[16];
 
   bgfx::Caps const* m_caps;
 
@@ -417,12 +361,18 @@ private:
   uint16_t*  grid = nullptr;
 
   uint32_t frameID = 0;
+  uint32_t numLuminanceMips = 0;
 
   float time = 0.f;
 
-  uint32_t dbgCell = 0;
-  uint32_t dbgBucket = 0;
-  uint32_t dbgShader = 0;
+  float sunlightAngle[4] = {0.f, 0.f, 0.f, 1.f};
+  float curExposure = .18f;
+  float curExposureMin = .0001f;
+  float curExposureMax = 5.f;
+
+  int32_t dbgCell = 0;
+  int32_t dbgBucket = 0;
+  int32_t dbgShader = 2;
 
   bool dbgLightGrid = false;
   bool dbgLightGridFrustum = false;
@@ -432,6 +382,7 @@ private:
   bool dbgDrawZBin = false;
   bool dbgDebugStats = false;
   bool dbgDebugMoveLights = true;
+  bool dbgPixelAvgLuminance = true;
 
   void unloadAssetData(RunParams* data, uint32_t data_count) {
     for (uint32_t i = 0, n = data_count; i < n; ++i) {
@@ -448,8 +399,18 @@ private:
         data[i].csLightCull = BGFX_INVALID_HANDLE;
       }
     }
-    bgfx::destroy(tonemapProg);
-    tonemapProg = BGFX_INVALID_HANDLE;
+    if (bgfx::isValid(tonemapProg)) {
+      bgfx::destroy(tonemapProg);
+      tonemapProg = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(logLuminanceAvProg)) {
+      bgfx::destroy(logLuminanceAvProg);
+      logLuminanceAvProg = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(luminancePixelProg)) {
+      bgfx::destroy(luminancePixelProg);
+      luminancePixelProg = BGFX_INVALID_HANDLE;
+    }
   }
 
   void loadAssetData(RunParams* data, uint32_t data_count) {
@@ -479,6 +440,13 @@ private:
     bgfx::Memory const* vs = loadMem(VS_DEBUG_ASSET_PATH);
     bgfx::Memory const* ps = loadMem(TONEMAP_ASSET_PATH);
     tonemapProg = bgfx::createProgram(bgfx::createShader(vs), bgfx::createShader(ps), true);
+
+    vs = loadMem(VS_DEBUG_ASSET_PATH);
+    ps = loadMem(FS_LUMINANCE_AVG_ASSET_PATH);
+    luminancePixelProg = bgfx::createProgram(bgfx::createShader(vs), bgfx::createShader(ps), true);
+
+    bgfx::Memory const* cs = loadMem(LUMINANCE_AVG_ASSET_PATH);
+    logLuminanceAvProg = bgfx::createProgram(bgfx::createShader(cs), true);
   }
 
   void init(int32_t _argc, const char* const* _argv, uint32_t _width, uint32_t _height) {
@@ -498,9 +466,6 @@ private:
 
     bgfx::init(bgfx::RendererType::Direct3D11, args.m_pciId);
     bgfx::reset(m_width, m_height, m_reset);
-
-    inputAddBindings("demo", s_inputBindings);
-
 
     const bgfx::RendererType::Enum renderer = bgfx::getRendererType();
     s_texelHalf = bgfx::RendererType::Direct3D9 == renderer ? 0.5f : 0.0f;
@@ -534,26 +499,30 @@ private:
     }
 
     timeUniform = bgfx::createUniform("u_gameTime", bgfx::UniformType::Vec4);
+    sunlightUniform = bgfx::createUniform("u_sunlight", bgfx::UniformType::Vec4);
     lightingParamsUniform = bgfx::createUniform("u_bucketParams", bgfx::UniformType::Vec4);
     csViewPrams = bgfx::createUniform("u_params", bgfx::UniformType::Vec4, 2);
     csLightData = bgfx::createUniform("u_lightData", bgfx::UniformType::Vec4);
+    exposureParamsUniform = bgfx::createUniform("u_exposureParams", bgfx::UniformType::Vec4);
+    offsetUniform = bgfx::createUniform("u_offset", bgfx::UniformType::Vec4, 3);
 
     baseTex = bgfx::createUniform("s_base", bgfx::UniformType::Int1);
     normalTex = bgfx::createUniform("s_normal", bgfx::UniformType::Int1);
     roughTex = bgfx::createUniform("s_roughness", bgfx::UniformType::Int1);
     metalTex = bgfx::createUniform("s_metallic", bgfx::UniformType::Int1);
     maskTex = bgfx::createUniform("s_mask", bgfx::UniformType::Int1);
+    luminanceTex = bgfx::createUniform("s_luminance", bgfx::UniformType::Int1);
 
     lights = new LightInit[LIGHT_COUNT];
-    float scale = 4.f;
+    float  scale = 4.f;
     vec3_t colours[7] = {
-      {1.f*scale, 0.f*scale, 0.f*scale},
-      {0.f*scale, 1.f*scale, 0.f*scale},
-      {1.f*scale, 1.f*scale, 0.f*scale},
-      {0.f*scale, 0.f*scale, 1.f*scale},
-      {1.f*scale, 0.f*scale, 1.f*scale},
-      {0.f*scale, 1.f*scale, 1.f*scale},
-      {1.f*scale, 1.f*scale, 1.f*scale},
+      {1.f * scale, 0.f * scale, 0.f * scale},
+      {0.f * scale, 1.f * scale, 0.f * scale},
+      {1.f * scale, 1.f * scale, 0.f * scale},
+      {0.f * scale, 0.f * scale, 1.f * scale},
+      {1.f * scale, 0.f * scale, 1.f * scale},
+      {0.f * scale, 1.f * scale, 1.f * scale},
+      {1.f * scale, 1.f * scale, 1.f * scale},
     };
     float range[3] = {
       (ab_max[0] - ab_min[0]), (ab_max[1] - ab_min[1]), (ab_max[2] - ab_min[2]),
@@ -600,48 +569,108 @@ private:
 
     grid = new uint16_t[LIGHT_GRID_SPACE * sizeof(uint16_t) * MAX_LIGHT_GRID_COUNT];
 
-	zPrePassTarget = bgfx::createFrameBuffer(bgfx::BackbufferRatio::Equal, bgfx::TextureFormat::D32F);
-	// BGFX can handle sRGB render targets, so use a 16bit float and resolve out end frame
-	colourTarget = bgfx::createTexture2D(bgfx::BackbufferRatio::Equal, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_RT);
-	bgfx::Attachment main_attachments[2] = {
-		{ colourTarget, 0, 0},
-		{ bgfx::getTexture(zPrePassTarget, 0), 0, 0 }
-	};
-	mainTarget = bgfx::createFrameBuffer(2, main_attachments);
+    zPrePassTarget = bgfx::createFrameBuffer(bgfx::BackbufferRatio::Equal, bgfx::TextureFormat::D32F);
+    // BGFX can handle sRGB render targets, so use a 16bit float and resolve out end frame
+    colourTarget =
+      bgfx::createTexture2D(bgfx::BackbufferRatio::Equal, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_RT);
+    bgfx::Attachment main_attachments[2] = {{colourTarget, 0, 0}, {bgfx::getTexture(zPrePassTarget, 0), 0, 0}};
+    mainTarget = bgfx::createFrameBuffer(2, main_attachments);
 
-	// Set view 0 clear state.
-	bgfx::setViewClear(RENDER_PASS_COMPUTE, BGFX_CLEAR_NONE , 0x303030ff, 1.0f, 0);
-	bgfx::setViewName(RENDER_PASS_COMPUTE, "Compute Pass");
-	bgfx::setViewMode(RENDER_PASS_COMPUTE, bgfx::ViewMode::Sequential);
-	bgfx::setViewClear(RENDER_PASS_ZPREPASS, BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
-	bgfx::setViewName(RENDER_PASS_ZPREPASS, "Z PrePass");
-	bgfx::setViewMode(RENDER_PASS_ZPREPASS, bgfx::ViewMode::Sequential);
-	bgfx::setViewFrameBuffer(RENDER_PASS_ZPREPASS, zPrePassTarget);
-	bgfx::setViewClear(RENDER_PASS_SOLID, BGFX_CLEAR_COLOR, 0, 1.0f, 0);
-	bgfx::setViewName(RENDER_PASS_SOLID, "Solid Pass");
-	bgfx::setViewMode(RENDER_PASS_SOLID, bgfx::ViewMode::Sequential);
-	bgfx::setViewFrameBuffer(RENDER_PASS_SOLID, mainTarget);
-  bgfx::setViewClear(RENDER_PASS_TONEMAP, BGFX_CLEAR_NONE, 0, 1.0f, 0);
-  bgfx::setViewName(RENDER_PASS_TONEMAP, "Tonemap Pass");
-  bgfx::setViewMode(RENDER_PASS_TONEMAP, bgfx::ViewMode::Sequential);
-	bgfx::setViewClear(RENDER_PASS_DEBUG, BGFX_CLEAR_NONE, 0, 1.0f, 0);
-	bgfx::setViewName(RENDER_PASS_DEBUG, "Debug Pass");
-	bgfx::setViewMode(RENDER_PASS_DEBUG, bgfx::ViewMode::Sequential);
-	bgfx::setViewFrameBuffer(RENDER_PASS_DEBUG, mainTarget);
-	bgfx::setViewClear(RENDER_PASS_2DDEBUG, BGFX_CLEAR_NONE, 0, 1.0f, 0);
-	bgfx::setViewName(RENDER_PASS_2DDEBUG, "2D Debug Pass");
-	bgfx::setViewMode(RENDER_PASS_2DDEBUG, bgfx::ViewMode::Sequential);
-	bgfx::setViewFrameBuffer(RENDER_PASS_2DDEBUG, mainTarget);
+    bgfx::VertexDecl floatVertexDecl;
+    floatVertexDecl.begin().add(bgfx::Attrib::TexCoord0, 1, bgfx::AttribType::Float).end();
+
+    uint32_t luminanceGroupdW = (m_width + SMALL_DISPATCH_WAVE - 1) / SMALL_DISPATCH_WAVE;
+    uint32_t luminanceGroupdH = (m_height + SMALL_DISPATCH_WAVE - 1) / SMALL_DISPATCH_WAVE;
+    workingLuminanceBuffer = bgfx::createDynamicVertexBuffer(
+      luminanceGroupdW * luminanceGroupdH,
+      floatVertexDecl,
+      BGFX_BUFFER_COMPUTE_READ_WRITE | BGFX_BUFFER_COMPUTE_FORMAT_32x1 | BGFX_BUFFER_COMPUTE_TYPE_FLOAT);
+    averageLuminanceBuffer = bgfx::createDynamicVertexBuffer(
+      1,
+      floatVertexDecl,
+      BGFX_BUFFER_COMPUTE_READ_WRITE | BGFX_BUFFER_COMPUTE_FORMAT_32x1 | BGFX_BUFFER_COMPUTE_TYPE_FLOAT);
+
+    numLuminanceMips = 0;
+    uint32_t luminance_w = m_width / 2, luminance_h = m_height / 2;
+
+    while (luminance_w >= 1 || luminance_h >= 1) {
+      luminanceMips[numLuminanceMips] =
+        bgfx::createTexture2D(luminance_w, luminance_h, false, 1, bgfx::TextureFormat::R16F, BGFX_TEXTURE_RT);
+      luminanceTargets[numLuminanceMips++] = bgfx::createFrameBuffer(1, luminanceMips + numLuminanceMips);
+      if (luminance_w == 1 && luminance_h == 1) break;
+      if (luminance_w > 1) luminance_w /= 2;
+      if (luminance_h > 1) luminance_h /= 2;
+    }
+
+    // Set view 0 clear state.
+    bgfx::setViewClear(RENDER_PASS_COMPUTE, BGFX_CLEAR_NONE, 0x303030ff, 1.0f, 0);
+    bgfx::setViewName(RENDER_PASS_COMPUTE, "Compute Pass");
+    bgfx::setViewMode(RENDER_PASS_COMPUTE, bgfx::ViewMode::Sequential);
+    bgfx::setViewClear(RENDER_PASS_ZPREPASS, BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
+    bgfx::setViewName(RENDER_PASS_ZPREPASS, "Z PrePass");
+    bgfx::setViewMode(RENDER_PASS_ZPREPASS, bgfx::ViewMode::Sequential);
+    bgfx::setViewFrameBuffer(RENDER_PASS_ZPREPASS, zPrePassTarget);
+    bgfx::setViewClear(RENDER_PASS_SOLID, BGFX_CLEAR_COLOR, 0, 1.0f, 0);
+    bgfx::setViewName(RENDER_PASS_SOLID, "Solid Pass");
+    bgfx::setViewMode(RENDER_PASS_SOLID, bgfx::ViewMode::Sequential);
+    bgfx::setViewFrameBuffer(RENDER_PASS_SOLID, mainTarget);
+
+    for (uint32_t i = 0; i < numLuminanceMips; ++i) {
+      bgfx::setViewClear(RENDER_PASS_LUMINANCE_START + i, BGFX_CLEAR_NONE, 0, 1.0f, 0);
+      bgfx::setViewName(RENDER_PASS_LUMINANCE_START + i, "Luminance Pass");
+      bgfx::setViewMode(RENDER_PASS_LUMINANCE_START + i, bgfx::ViewMode::Sequential);
+      bgfx::setViewFrameBuffer(RENDER_PASS_LUMINANCE_START + i, luminanceTargets[i]);
+    }
+
+    bgfx::setViewClear(RENDER_PASS_TONEMAP, BGFX_CLEAR_NONE, 0, 1.0f, 0);
+    bgfx::setViewName(RENDER_PASS_TONEMAP, "Tonemap Pass");
+    bgfx::setViewMode(RENDER_PASS_TONEMAP, bgfx::ViewMode::Sequential);
+    bgfx::setViewClear(RENDER_PASS_DEBUG, BGFX_CLEAR_NONE, 0, 1.0f, 0);
+    bgfx::setViewName(RENDER_PASS_DEBUG, "Debug Pass");
+    bgfx::setViewMode(RENDER_PASS_DEBUG, bgfx::ViewMode::Sequential);
+    bgfx::setViewFrameBuffer(RENDER_PASS_DEBUG, mainTarget);
+    bgfx::setViewClear(RENDER_PASS_2DDEBUG, BGFX_CLEAR_NONE, 0, 1.0f, 0);
+    bgfx::setViewName(RENDER_PASS_2DDEBUG, "2D Debug Pass");
+    bgfx::setViewMode(RENDER_PASS_2DDEBUG, bgfx::ViewMode::Sequential);
+    bgfx::setViewFrameBuffer(RENDER_PASS_2DDEBUG, mainTarget);
 
     ddInit();
-
-    memset(inputs, 0, sizeof inputs);
+    imguiCreate();
   }
 
   virtual int shutdown() {
+    imguiDestroy();
     cameraDestroy();
 
+    bgfx::destroy(timeUniform);
+    bgfx::destroy(lightingParamsUniform);
+    bgfx::destroy(csViewPrams);
+    bgfx::destroy(csLightData);
+    bgfx::destroy(baseTex);
+    bgfx::destroy(normalTex);
+    bgfx::destroy(roughTex);
+    bgfx::destroy(metalTex);
+    bgfx::destroy(maskTex);
+    bgfx::destroy(lightPositionBuffer);
+    bgfx::destroy(zBinBuffer);
+    bgfx::destroy(lightGridBuffer);
+    bgfx::destroy(lightListBuffer);
+    bgfx::destroy(lightGridFatBuffer);
+    bgfx::destroy(workingLuminanceBuffer);
+    bgfx::destroy(averageLuminanceBuffer);
+
+    bgfx::destroy(zPrePassTarget);
+    bgfx::destroy(mainTarget);
+
+    bgfx::destroy(colourTarget);
+
+    for (uint32_t i = 0; i < numLuminanceMips; ++i) {
+      bgfx::destroy(luminanceTargets[i]);
+      bgfx::destroy(luminanceMips[i]);
+    }
+
     util::mesh_unload(&m_mesh);
+    util::material_unload(&m_materials);
     unloadAssetData(ShaderParams, SOLID_PROGS);
     // Shutdown bgfx.
     bgfx::shutdown();
@@ -871,7 +900,7 @@ private:
           // bgfx::dbgTextPrintf(0, 31, 0x6f, "%f, %f, %f", ntr.x, ntr.y, ntr.z);
           // bgfx::dbgTextPrintf(0, 32, 0x6f, "%f, %f, %f", nbl.x, nbl.y, nbl.z);
           // bgfx::dbgTextPrintf(0, 33, 0x6f, "%f, %f, %f", nbr.x, nbr.y, nbr.z);
-		  // 
+          //
           // bgfx::dbgTextPrintf(0, 35, 0x6f, "%f, %f, %f", ftl.x, ftl.y, ftl.z);
           // bgfx::dbgTextPrintf(0, 36, 0x6f, "%f, %f, %f", ftr.x, ftr.y, ftr.z);
           // bgfx::dbgTextPrintf(0, 37, 0x6f, "%f, %f, %f", fbl.x, fbl.y, fbl.z);
@@ -973,50 +1002,47 @@ private:
       {1.f, 0.f, 0.f, 1.f}, {0.f, 1.f, 0.f, 1.f}, {0.f, 0.f, 1.f, 1.f},
     };
 
-    for (auto& i : inputs) {
-      i.state = false;
-      i.rising = false;
-      i.repeat = false;
-      i.falling = false;
-    }
-
     if (!entry::processEvents(m_width, m_height, m_debug, m_reset, &mouseState)) {
-      for (auto& i : inputs) {
-        if (i.state && !i.down) {
-          i.rising = true;
+      imguiBeginFrame(mouseState.m_mx,
+                      mouseState.m_my,
+                      (mouseState.m_buttons[entry::MouseButton::Left] ? IMGUI_MBUT_LEFT : 0) |
+                        (mouseState.m_buttons[entry::MouseButton::Right] ? IMGUI_MBUT_RIGHT : 0) |
+                        (mouseState.m_buttons[entry::MouseButton::Middle] ? IMGUI_MBUT_MIDDLE : 0),
+                      mouseState.m_mz,
+                      uint16_t(m_width),
+                      uint16_t(m_height));
+
+      if (ImGui::Begin("Debug Options")) {
+        if (ImGui::Button("Reload Shaders")) {
+          loadAssetData(ShaderParams, SOLID_PROGS);
         }
-        if (!i.state && i.down) i.falling = true;
-        i.down = i.state;
+        if (ImGui::CollapsingHeader("Render Control")) {
+          ImGui::SliderFloat3("Sunlight Angle", sunlightAngle, 0.f, 360.f);
+          ImGui::SliderFloat("Sunlight Power", sunlightAngle + 3, 0.5f, 10.f);
+          ImGui::SliderFloat("Exposure Key", &curExposure, 0.0001f, 10.f);
+          ImGui::SliderFloat("Exposure Min", &curExposureMin, 0.0001f, 1.f);
+          ImGui::SliderFloat("Exposure Max", &curExposureMax, curExposureMin, 10.f);
+        }
+        if (ImGui::CollapsingHeader("Debug")) {
+          char const* shader_names[SOLID_PROGS] = {nullptr};
+          for (uint32_t i = 0; i < SOLID_PROGS; ++i)
+            shader_names[i] = ShaderParams[i].description;
+          ImGui::ListBox("Current Shader", &dbgShader, shader_names, SOLID_PROGS);
+          ImGui::Checkbox("Debug Light Grid", &dbgLightGrid);
+          ImGui::Checkbox("Draw Light Grid Frustum", &dbgLightGridFrustum);
+          ImGui::Checkbox("Enable Light View Updates", &dbgUpdateFrustum);
+          ImGui::Checkbox("Draw Light", &dbgDrawLights);
+          ImGui::Checkbox("Wireframe Lights", &dbgDrawLightsWire);
+          ImGui::Checkbox("Draw Z Bins", &dbgDrawZBin);
+          ImGui::Checkbox("Draw Debug Stats", &dbgDebugStats);
+          ImGui::Checkbox("Enable Light Movement", &dbgDebugMoveLights);
+          uint32_t max_cell = ((m_width / GRID_SIZE) * ((m_height + GRID_SIZE_M_ONE) / GRID_SIZE));
+          ImGui::SliderInt("Debug Cell Info Index", &dbgCell, 0, max_cell);
+          ImGui::SliderInt("Debug Z Bin Info Index", &dbgBucket, 0, Z_BUCKETS);
+          ImGui::Checkbox("Use Pixel Shader Average Luminance", &dbgPixelAvgLuminance);
+        }
       }
-
-      if (inputs[IA_ToggleLightGrid].rising) dbgLightGrid = !dbgLightGrid;
-      if (inputs[IA_ToggleLightGridFrustum].rising) dbgLightGridFrustum = !dbgLightGridFrustum;
-      if (inputs[IA_ToggleFrustumUpdate].rising) dbgUpdateFrustum = !dbgUpdateFrustum;
-      if (inputs[IA_ToggleDebugLights].rising) dbgDrawLights = !dbgDrawLights;
-      if (inputs[IA_ToggleDebugLightsWire].rising) dbgDrawLightsWire = !dbgDrawLightsWire;
-      if (inputs[IA_CellUp].rising) ++dbgCell;
-      if (inputs[IA_CellDown].rising) --dbgCell;
-      if (inputs[IA_CellRowUp].rising) dbgCell += m_width / GRID_SIZE;
-      if (inputs[IA_CellRowDown].rising) dbgCell -= m_width / GRID_SIZE;
-      if (inputs[IA_BinUp].rising) ++dbgBucket;
-      if (inputs[IA_BinDown].rising) --dbgBucket;
-      if (inputs[IA_DrawBins].rising) dbgDrawZBin = !dbgDrawZBin;
-      if (inputs[IA_DebugStats].rising) dbgDebugStats = !dbgDebugStats;
-      if (inputs[IA_MovingLights].rising) dbgDebugMoveLights = !dbgDebugMoveLights;
-      if (inputs[IA_Shader].rising) {
-        dbgShader = (dbgShader + 1) % SOLID_PROGS;
-      }
-      if (inputs[IA_ShaderPrev].rising) {
-        dbgShader = !dbgShader ? SOLID_PROGS - 1 : --dbgShader;
-      }
-      if (inputs[IA_ShaderReload].rising) {
-        loadAssetData(ShaderParams, SOLID_PROGS);
-      }
-
-      if (dbgCell > (m_width / GRID_SIZE) * ((m_height + GRID_SIZE_M_ONE) / GRID_SIZE)) {
-        dbgCell = 0;
-      }
-      if (dbgBucket > Z_BUCKETS) dbgBucket = 0;
+      ImGui::End();
 
       CameraParams   cam;
       int64_t        now = bx::getHPCounter();
@@ -1036,11 +1062,27 @@ private:
       float timeVec[4] = {time, 0.f, 0.f, 0.f};
       bgfx::setUniform(timeUniform, timeVec);
 
+      // setup sunlight
+      float  sunlight[4] = {0.f, 0.f, 1.f, sunlightAngle[3]};
+      vec3_t sunforward = {0.f, 0.f, 1.f}, sunforward2;
+      bx::mtxRotateXYZ(mTmp, deg_to_rad(sunlightAngle[0]), deg_to_rad(sunlightAngle[1]), deg_to_rad(sunlightAngle[2]));
+      bx::vec3MulMtx(sunforward2.v, sunforward.v, mTmp);
+
+      // Set sunlight in view space (requires inverse view transpose)
       bx::mtxInverse(mTmp, view);
       vec3_norm(&cam.up, (vec3_t*)&mTmp[4]);
       vec3_norm(&cam.right, (vec3_t*)&mTmp[0]);
       vec3_norm(&cam.forward, (vec3_t*)&mTmp[8]);
       bx::mtxTranspose(iViewX, mTmp);
+
+      bx::vec3MulMtx(sunforward.v, sunforward2.v, iViewX);
+      // Set sunlight in view space
+      vec3_norm(&sunforward2, &sunforward);
+      sunlight[0] = sunforward2.x;
+      sunlight[1] = sunforward2.y;
+      sunlight[2] = sunforward2.z;
+      bgfx::setUniform(sunlightUniform, sunlight);
+
       bx::mtxScale(mTmp, GLOBAL_SCALE, GLOBAL_SCALE, GLOBAL_SCALE);
 
       float proj[16], i_view[16];
@@ -1053,6 +1095,7 @@ private:
       cam.farPlane = 1000.0f;
       bx::mtxProj(proj, cam.fovy, cam.aspect, cam.nearPlane, cam.farPlane, false);
       memcpy(cam.view, view, sizeof(float) * 16);
+
       bx::mtxMul(cam.viewProj, view, proj);
 
       float orthoProj[16], idt[16];
@@ -1125,20 +1168,30 @@ private:
       // Set view 0 default viewport.
       bgfx::setViewRect(RENDER_PASS_COMPUTE, 0, 0, m_width, m_height);
       bgfx::setViewTransform(RENDER_PASS_COMPUTE, view, proj);
-	  bgfx::setViewRect(RENDER_PASS_ZPREPASS, 0, 0, m_width, m_height);
-	  bgfx::setViewTransform(RENDER_PASS_ZPREPASS, view, proj);
+      bgfx::setViewRect(RENDER_PASS_ZPREPASS, 0, 0, m_width, m_height);
+      bgfx::setViewTransform(RENDER_PASS_ZPREPASS, view, proj);
       bgfx::setViewRect(RENDER_PASS_SOLID, 0, 0, m_width, m_height);
       bgfx::setViewTransform(RENDER_PASS_SOLID, view, proj);
-    bgfx::setViewRect(RENDER_PASS_TONEMAP, 0, 0, m_width, m_height);
-    bgfx::setViewTransform(RENDER_PASS_TONEMAP, idt, orthoProj);
+
+      uint32_t luminance_w = m_width / 2, luminance_h = m_height / 2;
+      for (uint32_t i = 0; i < numLuminanceMips; ++i) {
+        bgfx::setViewRect(RENDER_PASS_LUMINANCE_START + i, 0, 0, luminance_w, luminance_h);
+        bgfx::setViewTransform(RENDER_PASS_LUMINANCE_START + i, idt, orthoProj);
+        if (luminance_w > 1) luminance_w /= 2;
+        if (luminance_h > 1) luminance_h /= 2;
+        bgfx::setViewFrameBuffer(RENDER_PASS_LUMINANCE_START + i, luminanceTargets[i]);
+      }
+
+      bgfx::setViewRect(RENDER_PASS_TONEMAP, 0, 0, m_width, m_height);
+      bgfx::setViewTransform(RENDER_PASS_TONEMAP, idt, orthoProj);
       bgfx::setViewRect(RENDER_PASS_DEBUG, 0, 0, m_width, m_height);
       bgfx::setViewTransform(RENDER_PASS_DEBUG, view, proj);
       bgfx::setViewRect(RENDER_PASS_2DDEBUG, 0, 0, m_width, m_height);
       bgfx::setViewTransform(RENDER_PASS_2DDEBUG, idt, orthoProj);
 
-	  bgfx::setViewFrameBuffer(RENDER_PASS_ZPREPASS, zPrePassTarget);
-	  bgfx::setViewFrameBuffer(RENDER_PASS_SOLID, mainTarget);
-    // The remaining passes render to the back buffer
+      bgfx::setViewFrameBuffer(RENDER_PASS_ZPREPASS, zPrePassTarget);
+      bgfx::setViewFrameBuffer(RENDER_PASS_SOLID, mainTarget);
+      // The remaining passes render to the back buffer
 
       uint64_t state = 0;
 
@@ -1191,8 +1244,58 @@ private:
         bgfx::submit(RENDER_PASS_2DDEBUG, ShaderParams[dbgShader].fullscreenProg);
       }
 
-      //Tonemap pass
+      // Average Luminance
+      if (dbgPixelAvgLuminance) {
+        uint32_t luminance_w = m_width / 2, luminance_h = m_height / 2;
+        uint32_t luminance_mip = 0;
+        for (uint32_t luminance_mip = 0; luminance_mip < numLuminanceMips; ++luminance_mip) {
+          bgfx::setState(BGFX_STATE_RGB_WRITE | BGFX_STATE_MSAA);
+          float uv_offsets[12] = {0.5f / ((float)luminance_w),
+                                  0.f,
+                                  -.5f / ((float)luminance_w),
+                                  0.f,
+                                  0.f,
+                                  0.5f / ((float)luminance_h),
+                                  0.f,
+                                  -.5f / ((float)luminance_h),
+                                  luminance_mip == 0 ? 1.f : 0.f,
+                                  0.f,
+                                  0.f,
+                                  0.f};
+          bgfx::setUniform(offsetUniform, uv_offsets, 3);
+          screenSpaceQuad((float)luminance_w, (float)luminance_h, s_texelHalf, m_caps->originBottomLeft);
+          bgfx::setTexture(1, luminanceTex, luminance_mip ? luminanceMips[luminance_mip - 1] : colourTarget);
+          bgfx::submit(RENDER_PASS_LUMINANCE_START + luminance_mip, luminancePixelProg);
+
+          if (luminance_w > 1) luminance_w /= 2;
+          if (luminance_h > 1) luminance_h /= 2;
+        }
+      }
+
       bgfx::setTexture(0, baseTex, colourTarget);
+      bgfx::setTexture(1, luminanceTex, luminanceMips[numLuminanceMips - 1]);
+      bgfx::setBuffer(1, workingLuminanceBuffer, bgfx::Access::ReadWrite); // input
+      bgfx::setBuffer(2, averageLuminanceBuffer, bgfx::Access::ReadWrite); // ouput
+      float viewParams[8] = {0.f,
+                             0.f,
+                             0.f,
+                             (float)m_width * m_height,
+                             (float)(m_width + SMALL_DISPATCH_WAVE - 1) / SMALL_DISPATCH_WAVE,
+                             (float)(m_height + SMALL_DISPATCH_WAVE - 1) / SMALL_DISPATCH_WAVE,
+                             (float)0,
+                             (float)(((m_width + SMALL_DISPATCH_WAVE - 1) / SMALL_DISPATCH_WAVE) *
+                                     ((m_height + SMALL_DISPATCH_WAVE - 1) / SMALL_DISPATCH_WAVE))};
+      bgfx::setUniform(csViewPrams, viewParams, 2);
+      bgfx::dispatch(RENDER_PASS_TONEMAP,
+                     logLuminanceAvProg,
+                     ((m_width + (SMALL_DISPATCH_WAVE - 1)) / SMALL_DISPATCH_WAVE),
+                     ((m_height + (SMALL_DISPATCH_WAVE - 1)) / SMALL_DISPATCH_WAVE),
+                     1);
+
+      // Tonemap pass
+      bgfx::setTexture(0, baseTex, colourTarget);
+      float exposure_params[4] = {curExposureMin, curExposureMax, curExposure, 0.f};
+      bgfx::setUniform(exposureParamsUniform, exposure_params);
       bgfx::setState(BGFX_STATE_RGB_WRITE | BGFX_STATE_MSAA);
       screenSpaceQuad((float)m_width, (float)m_height, s_texelHalf, m_caps->originBottomLeft);
       bgfx::submit(RENDER_PASS_TONEMAP, tonemapProg);
@@ -1287,6 +1390,7 @@ private:
       }
 
       ddEnd();
+      imguiEndFrame();
 
       // Advance to next frame. Rendering thread will be kicked to
       // process submitted rendering primitives.

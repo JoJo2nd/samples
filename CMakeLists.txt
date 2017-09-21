@@ -17,6 +17,7 @@ function(ADD_SAMPLE SAM_NAME)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/${SAM_NAME}/*.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/${SAM_NAME}/*.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/${SAM_NAME}/*.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/external/bgfx/examples/common/imgui/imgui.cpp"
     )
     add_executable(${SAM_NAME} ${SAMPLE_FILES})
 
@@ -51,6 +52,7 @@ set( INCLUDE_DIRS
     "${CMAKE_CURRENT_SOURCE_DIR}/external/bimg/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/bx/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/bgfx/examples/common"
+    "${CMAKE_CURRENT_SOURCE_DIR}/external/bgfx/3rdparty"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/common"
 )
 set( LINK_DIRS

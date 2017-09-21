@@ -1,4 +1,4 @@
-$input v_pos, v_wpos, v_view, v_normal, v_color0, v_texcoord0
+$input v_pos, v_wpos, v_view, v_normal, v_tangent, v_bitangent, v_texcoord0
 
 #include "../../../common/common.sh"
 #include "../../common_defines.h"
@@ -6,7 +6,7 @@ $input v_pos, v_wpos, v_view, v_normal, v_color0, v_texcoord0
 
 uniform vec4 u_gameTime;
 uniform vec4 u_bucketParams; // z bin bucket size, light grid size, light grid pitch
- 
+uniform vec4 u_sunlight;
 
 BUFFER_RO(zBin,         uvec2, 10); // start:uint16; end:uint16;
 BUFFER_RO(lightGrid,    uvec2, 11); // start:uint16; count:uint16;
@@ -47,6 +47,23 @@ float light_distance_attenuation(float light_radius_inverse, float dist_to_light
     return attFactor;
 }
 
+/*
+    Returns the normal from the normal map in view space. 
+    Assumining that norm, tang & bitang have been transformed into view space.
+*/
+vec3 readNormalMap(vec3 v_norm, vec3 v_tang, vec3 v_bitang, vec2 uv) {
+    mat3 fromTangentSpace = mat3(
+                normalize(vec3(v_tang.x, v_bitang.x, v_norm.x)),
+                normalize(vec3(v_tang.y, v_bitang.y, v_norm.y)),
+                normalize(vec3(v_tang.z, v_bitang.z, v_norm.z))
+                );
+
+    vec3 normal;
+    normal.xy = texture2D(s_normal, uv).xy * 2.0 - 1.0;
+    normal.z = sqrt(1.0 - dot(normal.xy, normal.xy) );
+    return mul(fromTangentSpace, normal);
+}
+
 void main() {
     uint2 grid_info = light_grid_data(gl_FragCoord.xy);
     uint2 z_bin = read_z_bin(v_view.z);
@@ -54,14 +71,17 @@ void main() {
     vec2 uv = vec2(v_texcoord0.x, 1-v_texcoord0.y);
 
     vec4 albedo = texture2D(s_base, uv);
-    vec4 normal = texture2D(s_normal, uv);
+    vec3 normal = readNormalMap(v_normal, v_tangent, v_bitangent, uv);
     vec4 metal = texture2D(s_metallic, uv);
     vec4 rough = texture2D(s_roughness, uv);
 
+
+
     {
-        vec3 lightDir = -normalize(vec3(0, 0, 1));
-        vec3 ndotl = saturate(dot(lightDir, normalize(v_normal)));     
-        //gl_FragColor.xyz = ndotl.xxx * albedo;
+        vec3 lightDir = -normalize(u_sunlight.xyz);
+        vec3 ndotl = saturate(dot(lightDir, normalize(normal)));     
+        gl_FragColor.xyz = ndotl.xxx * albedo * u_sunlight.w;
+        //gl_FragColor.xyz = encodeNormalUint(normal);
     }
 
     //vec3 force_use = normal * metal * rough * normal * 0.00001;
@@ -70,9 +90,6 @@ void main() {
     for (uint light_idx = 0, light_n = MAX_LIGHT_COUNT; light_idx < light_n; ++light_idx) {
       uint real_light_idx = lightGridFat[startOffset + light_idx];
       if (real_light_idx == 0xffff) break;
-    // use all lights
-    //for (uint light_idx = 0, light_n = 100; light_idx < light_n; ++light_idx) {
-    //    uint real_light_idx = light_idx*2;
 #if !DEBUG_NO_BINS
         if (real_light_idx >= z_bin.x && real_light_idx < z_bin.y) {
 #endif
@@ -86,7 +103,7 @@ void main() {
             vec3 lightDir = normalize(pos_to_light);
             vec3 toEye = -normalize(v_view);
             vec3 half = normalize(toEye + lightDir);
-            vec3 ndotl = saturate(dot(lightDir, normalize(v_normal)));            
+            vec3 ndotl = saturate(dot(lightDir, normalize(normal)));            
 #if DEBUG_LIGHT_EVAL
             gl_FragColor.r += 1;       
 #else

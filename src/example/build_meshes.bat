@@ -14,9 +14,9 @@ if not exist "%DATADEST%" mkdir "%DATADEST%"
 
 del /Q "%DATADEST%\*.mesh"
 
-call "%GEOMETRYC%" -f "%DATASRC%/mesh/bunny.obj" -o "%DATADEST%/bunny.mesh"
-call "%GEOMETRYC%" -f "%DATASRC%/mesh/orb.obj" -o "%DATADEST%/orb.mesh"
-call "%GEOMETRYC%" -f "%DATASRC%/sponza/sponza_pbr.obj" -o "%DATADEST%/sponza_pbr.mesh"
+call "%GEOMETRYC%" --tangent -f "%DATASRC%/mesh/bunny.obj" -o "%DATADEST%/bunny.mesh"
+call "%GEOMETRYC%" --tangent -f "%DATASRC%/mesh/orb.obj" -o "%DATADEST%/orb.mesh"
+call "%GEOMETRYC%" --tangent -f "%DATASRC%/sponza/sponza_pbr.obj" -o "%DATADEST%/sponza_pbr.mesh"
 copy "%DATASRC%/sponza/sponza.mat" "%DATADEST%/sponza.mat"
 
 popd

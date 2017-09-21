@@ -36,6 +36,10 @@ call "%SHADERC%" -f "%DATASRC%/shaders/ps_zfill.sc" %SHADER_INC% --type fragment
 
 call "%SHADERC%" -f "%DATASRC%/shaders/tonemap.sc" %SHADER_INC% --type fragment -o "%DATADEST%/tonemap.ps" -p ps_5_0 --platform windows %DEBUG_SHADERS%
 
+call "%SHADERC%" -f "%DATASRC%/shaders/calc_luminance.sc" %SHADER_INC% --type fragment -o "%DATADEST%/log_luminance_avg.ps" -p ps_5_0 --platform windows %DEBUG_SHADERS%
+
+call "%SHADERC%" -f "%DATASRC%/shaders/logLumaAv.cc" %SHADER_INC% --type compute -o "%DATADEST%/log_luminance_avg.cs" -p cs_5_0 --platform windows %DEBUG_SHADERS%
+
 del /Q "%DATADEST%\*.hlsl"
 
 popd

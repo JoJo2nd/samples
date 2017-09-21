@@ -5,9 +5,13 @@
 #define RENDER_PASS_COMPUTE (0)
 #define RENDER_PASS_ZPREPASS (1)
 #define RENDER_PASS_SOLID (2)
-#define RENDER_PASS_TONEMAP (3)
-#define RENDER_PASS_DEBUG (4)
-#define RENDER_PASS_2DDEBUG (5)
+
+#define RENDER_PASS_LUMINANCE_START (10)
+
+#define RENDER_PASS_TONEMAP (32)
+
+#define RENDER_PASS_DEBUG (50)
+#define RENDER_PASS_2DDEBUG (51)
 
 #define INSTANCE_GIRD_SIZE (10)
 #define TOTAL_GRID_COUNT (INSTANCE_GIRD_SIZE * INSTANCE_GIRD_SIZE)
@@ -20,6 +24,7 @@
 #define MAX_LIGHT_COUNT (200)
 #define TILE_SIZE (32)
 #define DISPATCH_WAVE (64)
+#define SMALL_DISPATCH_WAVE (32)
 #define LIGHT_STORAGE_COUNT (TILE_SIZE * TILE_SIZE)
 #define LIGHT_FALLOFF (2)
 #define SOLID_PROGS (7)
@@ -40,6 +45,8 @@
 #define FS_FSDEBUG_WOCS_ASSET_PATH ("data/fs_debug_wocs.ps")
 
 #define TONEMAP_ASSET_PATH ("data/tonemap.ps")
+#define FS_LUMINANCE_AVG_ASSET_PATH ("data/log_luminance_avg.ps")
+#define LUMINANCE_AVG_ASSET_PATH ("data/log_luminance_avg.cs")
 
 #define VS_Z_FILL ("data/zfill.vs")
 #define PS_Z_FILL ("data/zfill.ps")
@@ -51,6 +58,8 @@
 #define MAX(x, y) (x > y ? x : y)
 
 #define GLOBAL_SCALE (0.1f)
+
+#define SHADER_FLT_EPSILON (0.00001)
 
 #ifndef DEBUG_LIGHT_EVAL
 #define DEBUG_LIGHT_EVAL (0)
