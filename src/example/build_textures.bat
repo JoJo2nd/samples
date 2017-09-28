@@ -18,7 +18,7 @@ call "%TEXTUREC%" -f "%DATASRC%\sponza\textures_pbr\Dielectric_metallic.tga" -o 
 echo Building sponza\textures_pbr\Sponza_Thorn_roughness.tga
 call "%TEXTUREC%" -f "%DATASRC%\sponza\textures_pbr\Sponza_Thorn_roughness.tga" -o "%DATADEST%\Sponza_Thorn_roughness.ktx" -t BC3 -m --as ktx
 echo Building sponza\textures_pbr\sponza_thorn_mask.tga
-call "%TEXTUREC%" -f "%DATASRC%\sponza\textures_pbr\sponza_thorn_mask.tga" -o "%DATADEST%\sponza_thorn_mask.ktx" -t BC3 -m --as ktx
+call "%TEXTUREC%" -f "%DATASRC%\sponza\textures_pbr\sponza_thorn_mask.tga" -o "%DATADEST%\sponza_thorn_mask.ktx" -t BC4 --as ktx
 REM source material - vase_round
 echo Building sponza\textures_pbr\VaseRound_diffuse.tga
 call "%TEXTUREC%" -f "%DATASRC%\sponza\textures_pbr\VaseRound_diffuse.tga" -o "%DATADEST%\VaseRound_diffuse.ktx" -t BC3 -m --as ktx
@@ -38,7 +38,7 @@ call "%TEXTUREC%" -f "%DATASRC%\sponza\textures_pbr\Dielectric_metallic.tga" -o 
 echo Building sponza\textures_pbr\VasePlant_roughness.tga
 call "%TEXTUREC%" -f "%DATASRC%\sponza\textures_pbr\VasePlant_roughness.tga" -o "%DATADEST%\VasePlant_roughness.ktx" -t BC3 -m --as ktx
 echo Building sponza\textures_pbr\vase_plant_mask.tga
-call "%TEXTUREC%" -f "%DATASRC%\sponza\textures_pbr\vase_plant_mask.tga" -o "%DATADEST%\vase_plant_mask.ktx" -t BC3 -m --as ktx
+call "%TEXTUREC%" -f "%DATASRC%\sponza\textures_pbr\vase_plant_mask.tga" -o "%DATADEST%\vase_plant_mask.ktx" -t BC4 --as ktx
 REM source material - Material__298
 echo Building sponza\textures_pbr\Background_Albedo.tga
 call "%TEXTUREC%" -f "%DATASRC%\sponza\textures_pbr\Background_Albedo.tga" -o "%DATADEST%\Background_Albedo.ktx" -t BC3 -m --as ktx
@@ -193,7 +193,7 @@ call "%TEXTUREC%" -f "%DATASRC%\sponza\textures_pbr\ChainTexture_Metallic.tga" -
 echo Building sponza\textures_pbr\ChainTexture_Roughness.tga
 call "%TEXTUREC%" -f "%DATASRC%\sponza\textures_pbr\ChainTexture_Roughness.tga" -o "%DATADEST%\ChainTexture_Roughness.ktx" -t BC3 -m --as ktx
 echo Building sponza\textures_pbr\chain_texture_mask.tga
-call "%TEXTUREC%" -f "%DATASRC%\sponza\textures_pbr\chain_texture_mask.tga" -o "%DATADEST%\chain_texture_mask.ktx" -t BC3 -m --as ktx
+call "%TEXTUREC%" -f "%DATASRC%\sponza\textures_pbr\chain_texture_mask.tga" -o "%DATADEST%\chain_texture_mask.ktx" -t BC4 --as ktx
 REM source material - vase_hanging
 echo Building sponza\textures_pbr\VaseHanging_diffuse.tga
 call "%TEXTUREC%" -f "%DATASRC%\sponza\textures_pbr\VaseHanging_diffuse.tga" -o "%DATADEST%\VaseHanging_diffuse.ktx" -t BC3 -m --as ktx

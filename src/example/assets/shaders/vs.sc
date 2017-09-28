@@ -12,8 +12,8 @@ void main()
     v_normal = mul((mat3)u_model[0], a_normal.xyz).xyz;
     v_tangent = mul((mat3)u_model[0], a_tangent.xyz).xyz;
     
-    v_normal = mul((mat3)u_view, v_normal.xyz).xyz;
-    v_tangent = mul((mat3)u_view, v_tangent.xyz).xyz;
+    //v_normal = mul((mat3)u_view, v_normal.xyz).xyz;
+    //v_tangent = mul((mat3)u_view, v_tangent.xyz).xyz;
     // a_tangent.w does flipping, depending on triangle winding order
     v_bitangent = cross(v_normal, v_tangent) * a_tangent.w;
 

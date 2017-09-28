@@ -46,7 +46,7 @@ groupshared vec4 tileFrustum[6];
 #if CS_MULTI
     groupshared uint writtenLights;
 #endif
-uint tileLights[LIGHT_STORAGE_COUNT];
+//uint tileLights[LIGHT_STORAGE_COUNT];
 
 vec4 plane_build(vec3 a, vec3 b, vec3 c) {
     vec4 p;
@@ -64,8 +64,16 @@ vec4 plane_build(vec3 a, vec3 b, vec3 c) {
     NUM_THREADS(1, 1, 1)
 #endif
 void main() {
-    // Calculate frustums for each tile.
+#if CS_MULTI        
     if (gl_LocalInvocationIndex == 0) {
+        // init the written lights
+        //atomicExchange(writtenLights, 0);
+        uint __x;
+        InterlockedExchange(writtenLights, 0, __x);
+    }
+#endif
+    // Calculate frustums for each tile.
+    {
         // first CU builds the frustum info
         uint width = u_width;
         uint height = u_height;
@@ -121,14 +129,6 @@ void main() {
         tileFrustum[4] = plane_build(ntr, ftr, ftl); // top
         tileFrustum[5] = plane_build(nbr, fbl, fbr); // bottom
     }
-    if (gl_LocalInvocationIndex == 0) {
-#if CS_MULTI        
-        // init the written lights
-        //atomicExchange(writtenLights, 0);
-        uint __x;
-        InterlockedExchange(writtenLights, 0, __x);
-#endif
-    }
     barrier();
     // Load and process lights
     uint lightCount = u_nLights;
@@ -137,6 +137,7 @@ void main() {
 #else
     uint processedLights = 0;
 #endif
+    uint current_processed_lights = 0;
     uint lightOffset = ((gl_WorkGroupID.y*(u_width/TILE_SIZE)) + (gl_WorkGroupID.x)) * MAX_LIGHT_COUNT;
 #if !CS_MULTI
     uint writtenLights = 0;
@@ -146,19 +147,18 @@ void main() {
         // Once loaded the next light group/set clip it
 
         //for (uint l = 0, n = LIGHT_STORAGE_COUNT; l < n; ++l) {
-        bool outside = false;
+        uint outside = 0;
         for (uint p = 0; p < 6; ++p) {
             vec3 pos = viewSpaceLights[(processedLights*2)].xyz;
             float radius = viewSpaceLights[(processedLights*2)].w;
             float dd = dot(tileFrustum[p].xyz, pos) - tileFrustum[p].w + radius;
-            if (dd < 0.f) outside = true;
+            if (dd < 0.f) outside = 0x80000000;
         }
         if (!outside) {
 #if CS_MULTI
             //uint idx = atomicAdd(writtenLights, 1);
             uint idx;
             InterlockedAdd(writtenLights, 1, idx);
-            //idx = writtenLights++;
             if(idx < (MAX_LIGHT_COUNT-1)) {
                 lightGrid[lightOffset + idx] = processedLights;
             }
@@ -168,7 +168,6 @@ void main() {
             }
 #endif
         }
-        //}
 
         //processedLights += LIGHT_STORAGE_COUNT;
         if (CS_MULTI)
@@ -184,4 +183,5 @@ void main() {
 #else
     lightGrid[lightOffset + writtenLights] = 0xFFFF;
 #endif
+    //barrier();
 }

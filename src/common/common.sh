@@ -17,3 +17,6 @@ SAMPLER2D(s_normal, 2);
 SAMPLER2D(s_roughness, 3);
 // alpha mask
 SAMPLER2D(s_mask, 4);
+
+// colour LUT
+SAMPLER3D(s_colourLUT, 5);

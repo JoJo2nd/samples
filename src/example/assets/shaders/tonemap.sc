@@ -28,7 +28,13 @@ void main() {
 
     // rough gamma curve convert. ACESFitted expects an sRGB input
     base.rgb = toGamma(base.rgb);
-    gl_FragColor.rgb = ACESFitted(base.rgb);
-    gl_FragColor.w = 1.0;
+    base.rgb = ACESFitted(base.rgb);
 
+    //colour grade
+    base.rgb = toLinear(base.rgb);
+    base.rgb = texture3DLod(s_colourLUT, /*vec3(0,1,0)/*/base.rgb, 0).rgb;
+    base.rgb = toGamma(base.rgb);
+
+    gl_FragColor.rgb = base.rgb;
+    gl_FragColor.w = 1.0;
 }

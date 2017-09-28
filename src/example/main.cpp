@@ -178,6 +178,13 @@ void vec3_norm(vec3_t* d, vec3_t* s) {
   d->v[2] = s->v[2] * dd;
 }
 
+uint8_t toGammaAccurate(float color_channel) {
+  float lo = color_channel * 12.92f;
+  float hi = powf(fabsf(color_channel), (1.0f / 2.4f)) * 1.055f - 0.055f;
+  float rgb = color_channel < 0.0031308f ? hi : lo;
+  return (uint8_t)CLAMP(rgb * 255, 0.f, 255.f);
+}
+
 struct CameraParams {
   float  fovy, aspect, nearPlane, farPlane;
   float  x, y, z;
@@ -222,6 +229,7 @@ struct LightGridRange {
 struct RunParams {
   char const* meshVSPath;
   char const* meshPSPath;
+  char const* meshPSMaskPath;
 
   char const* fsDbgVSPath;
   char const* fsDbgPSPath;
@@ -230,83 +238,127 @@ struct RunParams {
 
   char const* description;
 
+  char const* meshPSNoTexturePath;
+
   bgfx::ProgramHandle solidProg;
+  bgfx::ProgramHandle solidProgMask;
+  bgfx::ProgramHandle solidProgNoTex;
   bgfx::ProgramHandle fullscreenProg;
   bgfx::ProgramHandle csLightCull;
   bgfx::ProgramHandle zfillProg;
 };
 
+#define SHADER_DBG(vs1, fs1, fsm1, cs, dbvs, dbfs, name)                                                               \
+  {                                                                                                                    \
+    vs1, fs1, fsm1, dbvs, dbvs, cs, name, FS_NO_TEX_ASSET_PATH, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE,              \
+      BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE                               \
+  }
+
+#define SHADER_C(vs1, fs1, fsm1, cs, name) SHADER_DBG(vs1, fs1, fsm1, cs, nullptr, nullptr, name)
+#define SHADER(vs1, fs1, fsm1, name) SHADER_C(vs1, fs1, fsm1, nullptr, name)
+
 RunParams ShaderParams[SOLID_PROGS] = {
-  {VS_ASSET_PATH,
-   FS_ASSET_PATH,
-   nullptr,
-   nullptr,
-   nullptr,
-   "CPU Z Bin, CPU Tile Light Cull",
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE},
-  {VS_ASSET_PATH,
-   FS_WCS_ASSET_PATH,
-   nullptr,
-   nullptr,
-   CS_LIGHT_CULL_PATH_NO_OPT,
-   "CPU Z Bin, GPU Tile Light Cull (Slow)",
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE},
-  {VS_ASSET_PATH,
-   FS_WCS_ASSET_PATH,
-   nullptr,
-   nullptr,
-   CS_LIGHT_CULL_PATH,
-   "CPU Z Bin, GPU Tile Light Cull",
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE},
-  {VS_ASSET_PATH,
-   FS_WCS_ASSET_PATH,
-   VS_DEBUG_ASSET_PATH,
-   FS_FSDEBUG_WCS_ASSET_PATH,
-   CS_LIGHT_CULL_PATH,
-   "CPU Z Bin, GPU Tile Light Cull (Debug Overlay)",
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE},
-  {VS_ASSET_PATH,
-   FS_ASSET_PATH,
-   VS_DEBUG_ASSET_PATH,
-   FS_FSDEBUG_WCS_ASSET_PATH,
-   nullptr,
-   "CPU Z Bin, CPU Tile Light Cull (Debug Overlay)",
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE},
-  {VS_ASSET_PATH,
-   FS_DEBUG01_ASSET_PATH,
-   nullptr,
-   nullptr,
-   nullptr,
-   "Z Bin light evals",
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE},
-  {VS_ASSET_PATH,
-   FS_DEBUG02_ASSET_PATH,
-   nullptr,
-   nullptr,
-   nullptr,
-   "Tiled light evals",
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE,
-   BGFX_INVALID_HANDLE},
+  SHADER(VS_ASSET_PATH, FS_ASSET_PATH, FS_MASK_ASSET_PATH, "CPU Z Bin, CPU Tile Light Cull"),
+  SHADER_C(VS_ASSET_PATH,
+           FS_ASSET_PATH,
+           FS_MASK_ASSET_PATH,
+           CS_LIGHT_CULL_PATH_NO_OPT,
+           "CPU ZBin, GPU Light Cull (Slow)"),
+  SHADER_C(VS_ASSET_PATH, FS_ASSET_PATH, FS_MASK_ASSET_PATH, CS_LIGHT_CULL_PATH, "CPU Z Bin, GPU Tile Light Cull"),
+  SHADER_DBG(VS_ASSET_PATH,
+             FS_ASSET_PATH,
+             FS_MASK_ASSET_PATH,
+             CS_LIGHT_CULL_PATH,
+             VS_DEBUG_ASSET_PATH,
+             FS_FSDEBUG_WCS_ASSET_PATH,
+             "CPU Z Bin, GPU Tile Light Cull (Debug Overlay)"),
+  SHADER_DBG(VS_ASSET_PATH,
+             FS_ASSET_PATH,
+             FS_MASK_ASSET_PATH,
+             nullptr,
+             VS_DEBUG_ASSET_PATH,
+             FS_FSDEBUG_WCS_ASSET_PATH,
+             "CPU Z Bin, CPU Tile Light Cull (Debug Overlay)"),
+  SHADER(VS_ASSET_PATH, FS_DEBUG01_ASSET_PATH, nullptr, "Z Bin light evals"),
+  SHADER(VS_ASSET_PATH, FS_DEBUG02_ASSET_PATH, nullptr, "Tiled light evals"),
+};
+
+struct OrbParams {
+  float  colour[4];
+  vec3_t position;
+  float  roughnes;
+  bool   metal;
+};
+
+OrbParams Orbs[TOTAL_ORBS] = {
+  // Red, Metal
+  {{1.f, 0.f, 0.f, 1.f}, {-40.f, 1.f, 12.f}, 1.0f, true},
+  {{1.f, 0.f, 0.f, 1.f}, {-32.f, 1.f, 12.f}, 0.9f, true},
+  {{1.f, 0.f, 0.f, 1.f}, {-24.f, 1.f, 12.f}, 0.8f, true},
+  {{1.f, 0.f, 0.f, 1.f}, {-16.f, 1.f, 12.f}, 0.7f, true},
+  {{1.f, 0.f, 0.f, 1.f}, {-8.f, 1.f, 12.f}, 0.6f, true},
+  {{1.f, 0.f, 0.f, 1.f}, {8.f, 1.f, 12.f}, 0.5f, true},
+  {{1.f, 0.f, 0.f, 1.f}, {16.f, 1.f, 12.f}, 0.4f, true},
+  {{1.f, 0.f, 0.f, 1.f}, {24.f, 1.f, 12.f}, 0.3f, true},
+  {{1.f, 0.f, 0.f, 1.f}, {32.f, 1.f, 12.f}, 0.2f, true},
+  {{1.f, 0.f, 0.f, 1.f}, {40.f, 1.f, 12.f}, 0.1f, true},
+  // Red, Dieletric
+  {{1.f, 0.f, 0.f, 1.f}, {-40.f, 1.f, 8.f}, 1.0f, false},
+  {{1.f, 0.f, 0.f, 1.f}, {-32.f, 1.f, 8.f}, 0.9f, false},
+  {{1.f, 0.f, 0.f, 1.f}, {-24.f, 1.f, 8.f}, 0.8f, false},
+  {{1.f, 0.f, 0.f, 1.f}, {-16.f, 1.f, 8.f}, 0.7f, false},
+  {{1.f, 0.f, 0.f, 1.f}, {-8.f, 1.f, 8.f}, 0.6f, false},
+  {{1.f, 0.f, 0.f, 1.f}, {8.f, 1.f, 8.f}, 0.5f, false},
+  {{1.f, 0.f, 0.f, 1.f}, {16.f, 1.f, 8.f}, 0.4f, false},
+  {{1.f, 0.f, 0.f, 1.f}, {24.f, 1.f, 8.f}, 0.3f, false},
+  {{1.f, 0.f, 0.f, 1.f}, {32.f, 1.f, 8.f}, 0.2f, false},
+  {{1.f, 0.f, 0.f, 1.f}, {40.f, 1.f, 8.f}, 0.1f, false},
+
+  // Green, Metal
+  {{0.f, 1.f, 0.f, 1.f}, {-40.f, 1.f, 4.f}, 1.0f, true},
+  {{0.f, 1.f, 0.f, 1.f}, {-32.f, 1.f, 4.f}, 0.9f, true},
+  {{0.f, 1.f, 0.f, 1.f}, {-24.f, 1.f, 4.f}, 0.8f, true},
+  {{0.f, 1.f, 0.f, 1.f}, {-16.f, 1.f, 4.f}, 0.7f, true},
+  {{0.f, 1.f, 0.f, 1.f}, {-8.f, 1.f, 4.f}, 0.6f, true},
+  {{0.f, 1.f, 0.f, 1.f}, {8.f, 1.f, 4.f}, 0.5f, true},
+  {{0.f, 1.f, 0.f, 1.f}, {16.f, 1.f, 4.f}, 0.4f, true},
+  {{0.f, 1.f, 0.f, 1.f}, {24.f, 1.f, 4.f}, 0.3f, true},
+  {{0.f, 1.f, 0.f, 1.f}, {32.f, 1.f, 4.f}, 0.2f, true},
+  {{0.f, 1.f, 0.f, 1.f}, {40.f, 1.f, 4.f}, 0.1f, true},
+  // Green, Dieletric
+  {{0.f, 1.f, 0.f, 1.f}, {-40.f, 1.f, 0.f}, 1.0f, false},
+  {{0.f, 1.f, 0.f, 1.f}, {-32.f, 1.f, 0.f}, 0.9f, false},
+  {{0.f, 1.f, 0.f, 1.f}, {-24.f, 1.f, 0.f}, 0.8f, false},
+  {{0.f, 1.f, 0.f, 1.f}, {-16.f, 1.f, 0.f}, 0.7f, false},
+  {{0.f, 1.f, 0.f, 1.f}, {-8.f, 1.f, 0.f}, 0.6f, false},
+  {{0.f, 1.f, 0.f, 1.f}, {8.f, 1.f, 0.f}, 0.5f, false},
+  {{0.f, 1.f, 0.f, 1.f}, {16.f, 1.f, 0.f}, 0.4f, false},
+  {{0.f, 1.f, 0.f, 1.f}, {24.f, 1.f, 0.f}, 0.3f, false},
+  {{0.f, 1.f, 0.f, 1.f}, {32.f, 1.f, 0.f}, 0.2f, false},
+  {{0.f, 1.f, 0.f, 1.f}, {40.f, 1.f, 0.f}, 0.1f, false},
+
+  // Blue, Metal
+  {{0.f, 0.f, 1.f, 1.f}, {-40.f, 1.f, -4.f}, 1.0f, true},
+  {{0.f, 0.f, 1.f, 1.f}, {-32.f, 1.f, -4.f}, 0.9f, true},
+  {{0.f, 0.f, 1.f, 1.f}, {-24.f, 1.f, -4.f}, 0.8f, true},
+  {{0.f, 0.f, 1.f, 1.f}, {-16.f, 1.f, -4.f}, 0.7f, true},
+  {{0.f, 0.f, 1.f, 1.f}, {-8.f, 1.f, -4.f}, 0.6f, true},
+  {{0.f, 0.f, 1.f, 1.f}, {8.f, 1.f, -4.f}, 0.5f, true},
+  {{0.f, 0.f, 1.f, 1.f}, {16.f, 1.f, -4.f}, 0.4f, true},
+  {{0.f, 0.f, 1.f, 1.f}, {24.f, 1.f, -4.f}, 0.3f, true},
+  {{0.f, 0.f, 1.f, 1.f}, {32.f, 1.f, -4.f}, 0.2f, true},
+  {{0.f, 0.f, 1.f, 1.f}, {40.f, 1.f, -4.f}, 0.1f, true},
+  // Blue, Dieletric
+  {{0.f, 0.f, 1.f, 1.f}, {-40.f, 1.f, -8.f}, 1.0f, false},
+  {{0.f, 0.f, 1.f, 1.f}, {-32.f, 1.f, -8.f}, 0.9f, false},
+  {{0.f, 0.f, 1.f, 1.f}, {-24.f, 1.f, -8.f}, 0.8f, false},
+  {{0.f, 0.f, 1.f, 1.f}, {-16.f, 1.f, -8.f}, 0.7f, false},
+  {{0.f, 0.f, 1.f, 1.f}, {-8.f, 1.f, -8.f}, 0.6f, false},
+  {{0.f, 0.f, 1.f, 1.f}, {8.f, 1.f, -8.f}, 0.5f, false},
+  {{0.f, 0.f, 1.f, 1.f}, {16.f, 1.f, -8.f}, 0.4f, false},
+  {{0.f, 0.f, 1.f, 1.f}, {24.f, 1.f, -8.f}, 0.3f, false},
+  {{0.f, 0.f, 1.f, 1.f}, {32.f, 1.f, -8.f}, 0.2f, false},
+  {{0.f, 0.f, 1.f, 1.f}, {40.f, 1.f, -8.f}, 0.1f, false},
 };
 
 class ExampleHelloWorld : public entry::AppI {
@@ -319,11 +371,13 @@ private:
   float             cameraPos[4] = {0};
 
   util::Mesh          m_mesh;
+  util::Mesh          m_orb;
   util::MeshMaterials m_materials;
 
   bgfx::ProgramHandle logLuminanceAvProg = BGFX_INVALID_HANDLE;
   bgfx::ProgramHandle tonemapProg = BGFX_INVALID_HANDLE;
   bgfx::ProgramHandle luminancePixelProg = BGFX_INVALID_HANDLE;
+  bgfx::ProgramHandle copyProg = BGFX_INVALID_HANDLE;
 
   bgfx::UniformHandle timeUniform;
   bgfx::UniformHandle sunlightUniform;
@@ -332,6 +386,10 @@ private:
   bgfx::UniformHandle csLightData;
   bgfx::UniformHandle exposureParamsUniform;
   bgfx::UniformHandle offsetUniform;
+  bgfx::UniformHandle albedoUnform;
+  bgfx::UniformHandle metalRoughUniform;
+  bgfx::UniformHandle debugUniform;
+  bgfx::UniformHandle ambientColourUniform;
 
   bgfx::UniformHandle baseTex;
   bgfx::UniformHandle normalTex;
@@ -339,6 +397,7 @@ private:
   bgfx::UniformHandle metalTex;
   bgfx::UniformHandle maskTex;
   bgfx::UniformHandle luminanceTex;
+  bgfx::UniformHandle colourLUTTex;
 
   bgfx::DynamicVertexBufferHandle lightPositionBuffer;
   bgfx::DynamicVertexBufferHandle zBinBuffer;
@@ -350,11 +409,17 @@ private:
 
   bgfx::FrameBufferHandle zPrePassTarget;
   bgfx::FrameBufferHandle mainTarget;
+  bgfx::FrameBufferHandle finalTarget;
   bgfx::FrameBufferHandle luminanceTargets[16];
 
   bgfx::TextureHandle colourTarget;
+  bgfx::TextureHandle finalColourTarget;
   bgfx::TextureHandle luminanceMips[16];
+  bgfx::TextureHandle colourGradeLUT;
 
+
+  half_t*           colourGradeSrc;
+  half_t*           colourGradeDst;
   bgfx::Caps const* m_caps;
 
   LightInit* lights = nullptr; //[LIGHT_COUNT];
@@ -365,14 +430,16 @@ private:
 
   float time = 0.f;
 
-  float sunlightAngle[4] = {0.f, 0.f, 0.f, 1.f};
+  float sunlightAngle[4] = {0.f, 0.f, 0.f, 1.13f};
+  float ambientColour[4] = {1.f, 1.f, 1.f, .35f};
   float curExposure = .18f;
-  float curExposureMin = .0001f;
+  float curExposureMin = .5f;
   float curExposureMax = 5.f;
 
   int32_t dbgCell = 0;
   int32_t dbgBucket = 0;
   int32_t dbgShader = 2;
+  int32_t dbgVisMode = 0;
 
   bool dbgLightGrid = false;
   bool dbgLightGridFrustum = false;
@@ -389,6 +456,14 @@ private:
       if (bgfx::isValid(data[i].solidProg)) {
         bgfx::destroy(data[i].solidProg);
         data[i].solidProg = BGFX_INVALID_HANDLE;
+      }
+      if (bgfx::isValid(data[i].solidProgMask)) {
+        bgfx::destroy(data[i].solidProgMask);
+        data[i].solidProgMask = BGFX_INVALID_HANDLE;
+      }
+      if (bgfx::isValid(data[i].solidProgNoTex)) {
+        bgfx::destroy(data[i].solidProgNoTex);
+        data[i].solidProgNoTex = BGFX_INVALID_HANDLE;
       }
       if (bgfx::isValid(data[i].fullscreenProg)) {
         bgfx::destroy(data[i].fullscreenProg);
@@ -421,6 +496,16 @@ private:
         bgfx::Memory const* ps = loadMem(data[i].meshPSPath);
         data[i].solidProg = bgfx::createProgram(bgfx::createShader(vs), bgfx::createShader(ps), true);
       }
+      if (data[i].meshVSPath && data[i].meshPSMaskPath) {
+        bgfx::Memory const* vs = loadMem(data[i].meshVSPath);
+        bgfx::Memory const* ps = loadMem(data[i].meshPSMaskPath);
+        data[i].solidProgMask = bgfx::createProgram(bgfx::createShader(vs), bgfx::createShader(ps), true);
+      }
+      if (data[i].meshVSPath && data[i].meshPSNoTexturePath) {
+        bgfx::Memory const* vs = loadMem(data[i].meshVSPath);
+        bgfx::Memory const* ps = loadMem(data[i].meshPSNoTexturePath);
+        data[i].solidProgNoTex = bgfx::createProgram(bgfx::createShader(vs), bgfx::createShader(ps), true);
+      }
       /*if (data[i].meshVSPath)*/ {
         bgfx::Memory const* vs = loadMem(VS_Z_FILL);
         bgfx::Memory const* ps = loadMem(PS_Z_FILL);
@@ -444,6 +529,10 @@ private:
     vs = loadMem(VS_DEBUG_ASSET_PATH);
     ps = loadMem(FS_LUMINANCE_AVG_ASSET_PATH);
     luminancePixelProg = bgfx::createProgram(bgfx::createShader(vs), bgfx::createShader(ps), true);
+
+    vs = loadMem(VS_DEBUG_ASSET_PATH);
+    ps = loadMem(FS_COPY_ASSET_PATH);
+    copyProg = bgfx::createProgram(bgfx::createShader(vs), bgfx::createShader(ps), true);
 
     bgfx::Memory const* cs = loadMem(LUMINANCE_AVG_ASSET_PATH);
     logLuminanceAvProg = bgfx::createProgram(bgfx::createShader(cs), true);
@@ -481,6 +570,10 @@ private:
       util::mesh_load(&m_mesh, reader);
       bx::close(reader);
     }
+    if (bx::open(reader, ORB_MESH_ASSET_PATH)) {
+      util::mesh_load(&m_orb, reader);
+      bx::close(reader);
+    }
     if (bx::open(reader, SPONZA_MATERIAL_ASSET_PATH)) {
       util::material_load(&m_materials, reader);
     }
@@ -498,6 +591,32 @@ private:
       }
     }
 
+    colourGradeSrc = new half_t[COLOUR_LUT_DIM * COLOUR_LUT_DIM * COLOUR_LUT_DIM * 4];
+    colourGradeDst = new half_t[COLOUR_LUT_DIM * COLOUR_LUT_DIM * COLOUR_LUT_DIM * 4];
+
+    uint32_t stride = (uint32_t)(sizeof(half_t) * 4);
+    for (uint32_t z = 0; z < COLOUR_LUT_DIM; ++z) {
+      for (uint32_t y = 0; y < COLOUR_LUT_DIM; ++y) {
+        for (uint32_t x = 0; x < COLOUR_LUT_DIM; ++x) {
+          uint32_t idx = (z * COLOUR_LUT_DIM * COLOUR_LUT_DIM * 4) + (y * COLOUR_LUT_DIM * 4) + x * 4;
+          colourGradeSrc[idx + 0] = util::float_to_half(CLAMP((float)x / (float)COLOUR_LUT_DIM, 0.f, 1.f));
+          colourGradeSrc[idx + 1] = util::float_to_half(CLAMP((float)y / (float)COLOUR_LUT_DIM, 0.f, 1.f));
+          colourGradeSrc[idx + 2] = util::float_to_half(CLAMP((float)z / (float)COLOUR_LUT_DIM, 0.f, 1.f));
+          colourGradeSrc[idx + 3] = util::float_to_half(1.0f);
+        }
+      }
+    }
+
+    memcpy(colourGradeDst, colourGradeSrc, COLOUR_LUT_DIM * COLOUR_LUT_DIM * COLOUR_LUT_DIM * stride);
+    colourGradeLUT =
+      bgfx::createTexture3D(COLOUR_LUT_DIM,
+                            COLOUR_LUT_DIM,
+                            COLOUR_LUT_DIM,
+                            false,
+                            bgfx::TextureFormat::RGBA16F,
+                            BGFX_TEXTURE_U_CLAMP | BGFX_TEXTURE_V_CLAMP | BGFX_TEXTURE_W_CLAMP,
+                            bgfx::copy(colourGradeDst, COLOUR_LUT_DIM * COLOUR_LUT_DIM * COLOUR_LUT_DIM * stride));
+
     timeUniform = bgfx::createUniform("u_gameTime", bgfx::UniformType::Vec4);
     sunlightUniform = bgfx::createUniform("u_sunlight", bgfx::UniformType::Vec4);
     lightingParamsUniform = bgfx::createUniform("u_bucketParams", bgfx::UniformType::Vec4);
@@ -505,6 +624,10 @@ private:
     csLightData = bgfx::createUniform("u_lightData", bgfx::UniformType::Vec4);
     exposureParamsUniform = bgfx::createUniform("u_exposureParams", bgfx::UniformType::Vec4);
     offsetUniform = bgfx::createUniform("u_offset", bgfx::UniformType::Vec4, 3);
+    albedoUnform = bgfx::createUniform("u_albedo", bgfx::UniformType::Vec4);
+    metalRoughUniform = bgfx::createUniform("u_metalrough", bgfx::UniformType::Vec4);
+    debugUniform = bgfx::createUniform("u_debugMode", bgfx::UniformType::Vec4);
+    ambientColourUniform = bgfx::createUniform("u_ambientColour", bgfx::UniformType::Vec4);
 
     baseTex = bgfx::createUniform("s_base", bgfx::UniformType::Int1);
     normalTex = bgfx::createUniform("s_normal", bgfx::UniformType::Int1);
@@ -512,6 +635,7 @@ private:
     metalTex = bgfx::createUniform("s_metallic", bgfx::UniformType::Int1);
     maskTex = bgfx::createUniform("s_mask", bgfx::UniformType::Int1);
     luminanceTex = bgfx::createUniform("s_luminance", bgfx::UniformType::Int1);
+    colourLUTTex = bgfx::createUniform("s_colourLUT", bgfx::UniformType::Int1);
 
     lights = new LightInit[LIGHT_COUNT];
     float  scale = 4.f;
@@ -576,6 +700,11 @@ private:
     bgfx::Attachment main_attachments[2] = {{colourTarget, 0, 0}, {bgfx::getTexture(zPrePassTarget, 0), 0, 0}};
     mainTarget = bgfx::createFrameBuffer(2, main_attachments);
 
+    finalColourTarget =
+      bgfx::createTexture2D(bgfx::BackbufferRatio::Equal, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_RT);
+    bgfx::Attachment final_attachments[2] = {{finalColourTarget, 0, 0}, {bgfx::getTexture(zPrePassTarget, 0), 0, 0}};
+    finalTarget = bgfx::createFrameBuffer(2, final_attachments);
+
     bgfx::VertexDecl floatVertexDecl;
     floatVertexDecl.begin().add(bgfx::Attrib::TexCoord0, 1, bgfx::AttribType::Float).end();
 
@@ -609,17 +738,14 @@ private:
     bgfx::setViewClear(RENDER_PASS_ZPREPASS, BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
     bgfx::setViewName(RENDER_PASS_ZPREPASS, "Z PrePass");
     bgfx::setViewMode(RENDER_PASS_ZPREPASS, bgfx::ViewMode::Sequential);
-    bgfx::setViewFrameBuffer(RENDER_PASS_ZPREPASS, zPrePassTarget);
     bgfx::setViewClear(RENDER_PASS_SOLID, BGFX_CLEAR_COLOR, 0, 1.0f, 0);
     bgfx::setViewName(RENDER_PASS_SOLID, "Solid Pass");
     bgfx::setViewMode(RENDER_PASS_SOLID, bgfx::ViewMode::Sequential);
-    bgfx::setViewFrameBuffer(RENDER_PASS_SOLID, mainTarget);
 
     for (uint32_t i = 0; i < numLuminanceMips; ++i) {
       bgfx::setViewClear(RENDER_PASS_LUMINANCE_START + i, BGFX_CLEAR_NONE, 0, 1.0f, 0);
       bgfx::setViewName(RENDER_PASS_LUMINANCE_START + i, "Luminance Pass");
       bgfx::setViewMode(RENDER_PASS_LUMINANCE_START + i, bgfx::ViewMode::Sequential);
-      bgfx::setViewFrameBuffer(RENDER_PASS_LUMINANCE_START + i, luminanceTargets[i]);
     }
 
     bgfx::setViewClear(RENDER_PASS_TONEMAP, BGFX_CLEAR_NONE, 0, 1.0f, 0);
@@ -628,11 +754,12 @@ private:
     bgfx::setViewClear(RENDER_PASS_DEBUG, BGFX_CLEAR_NONE, 0, 1.0f, 0);
     bgfx::setViewName(RENDER_PASS_DEBUG, "Debug Pass");
     bgfx::setViewMode(RENDER_PASS_DEBUG, bgfx::ViewMode::Sequential);
-    bgfx::setViewFrameBuffer(RENDER_PASS_DEBUG, mainTarget);
+    bgfx::setViewClear(RENDER_POST_DEBUG_BLIT, BGFX_CLEAR_NONE, 0, 1.0f, 0);
+    bgfx::setViewName(RENDER_POST_DEBUG_BLIT, "Post Debug Blit Pass");
+    bgfx::setViewMode(RENDER_POST_DEBUG_BLIT, bgfx::ViewMode::Sequential);
     bgfx::setViewClear(RENDER_PASS_2DDEBUG, BGFX_CLEAR_NONE, 0, 1.0f, 0);
     bgfx::setViewName(RENDER_PASS_2DDEBUG, "2D Debug Pass");
     bgfx::setViewMode(RENDER_PASS_2DDEBUG, bgfx::ViewMode::Sequential);
-    bgfx::setViewFrameBuffer(RENDER_PASS_2DDEBUG, mainTarget);
 
     ddInit();
     imguiCreate();
@@ -696,6 +823,7 @@ private:
         bx::vec3MulMtx(viewSpaceLights[i].p.v, t.v, cam->view);
         viewSpaceLights[i].radius = lights[i].radius;
         viewSpaceLights[i].col = lights[i].col;
+        viewSpaceLights[i].pad = 0;
       }
     } else {
       for (uint32_t i = 0, n = light_count; i < n; ++i) {
@@ -708,7 +836,7 @@ private:
       LightInfo* lhs = (LightInfo*)vlhs;
       LightInfo* rhs = (LightInfo*)vrhs;
       // View space forward is down the +Z
-      return lhs->p.z - lhs->radius < rhs->p.z - rhs->radius ? -1 : 1;
+      return lhs->p.z < rhs->p.z ? -1 : 1;
     });
     // get min & max depth
     float z_depth_min = MAX(viewSpaceLights[0].p.z, 0.f), z_depth_max = viewSpaceLights[light_count - 1].p.z;
@@ -726,11 +854,10 @@ private:
     uint32_t cur_l = 0, end_l = light_count;
     for (; cur_l < end_l; ++cur_l) {
       if (viewSpaceLights[cur_l].p.z + viewSpaceLights[cur_l].radius < 0.f) continue;
-      uint16_t min_z =
-        (uint16_t)MIN(fabsf((viewSpaceLights[cur_l].p.z - viewSpaceLights[cur_l].radius) / z_step), Z_BUCKETS - 1);
-      uint16_t max_z =
-        (uint16_t)MIN(fabs((viewSpaceLights[cur_l].p.z + viewSpaceLights[cur_l].radius) / z_step), Z_BUCKETS - 1);
-      for (uint16_t cz = min_z; cz <= max_z; ++cz) {
+      int32_t min_z = (int32_t)MIN(fabsf((viewSpaceLights[cur_l].p.z - viewSpaceLights[cur_l].radius) / z_step), Z_BUCKETS - 1);
+      int32_t max_z = (int32_t)MIN(fabsf((viewSpaceLights[cur_l].p.z + viewSpaceLights[cur_l].radius) / z_step), Z_BUCKETS - 1);
+      for (int32_t cz = min_z; cz <= max_z; ++cz) {
+        if (cz < 0) continue;
         uint16_t hiword = (zbin[cz] & 0xFFFF0000) >> 16;
         uint16_t loword = zbin[cz] & 0xFFFF;
         if (hiword < cur_l) hiword = cur_l;
@@ -1012,38 +1139,6 @@ private:
                       uint16_t(m_width),
                       uint16_t(m_height));
 
-      if (ImGui::Begin("Debug Options")) {
-        if (ImGui::Button("Reload Shaders")) {
-          loadAssetData(ShaderParams, SOLID_PROGS);
-        }
-        if (ImGui::CollapsingHeader("Render Control")) {
-          ImGui::SliderFloat3("Sunlight Angle", sunlightAngle, 0.f, 360.f);
-          ImGui::SliderFloat("Sunlight Power", sunlightAngle + 3, 0.5f, 10.f);
-          ImGui::SliderFloat("Exposure Key", &curExposure, 0.0001f, 10.f);
-          ImGui::SliderFloat("Exposure Min", &curExposureMin, 0.0001f, 1.f);
-          ImGui::SliderFloat("Exposure Max", &curExposureMax, curExposureMin, 10.f);
-        }
-        if (ImGui::CollapsingHeader("Debug")) {
-          char const* shader_names[SOLID_PROGS] = {nullptr};
-          for (uint32_t i = 0; i < SOLID_PROGS; ++i)
-            shader_names[i] = ShaderParams[i].description;
-          ImGui::ListBox("Current Shader", &dbgShader, shader_names, SOLID_PROGS);
-          ImGui::Checkbox("Debug Light Grid", &dbgLightGrid);
-          ImGui::Checkbox("Draw Light Grid Frustum", &dbgLightGridFrustum);
-          ImGui::Checkbox("Enable Light View Updates", &dbgUpdateFrustum);
-          ImGui::Checkbox("Draw Light", &dbgDrawLights);
-          ImGui::Checkbox("Wireframe Lights", &dbgDrawLightsWire);
-          ImGui::Checkbox("Draw Z Bins", &dbgDrawZBin);
-          ImGui::Checkbox("Draw Debug Stats", &dbgDebugStats);
-          ImGui::Checkbox("Enable Light Movement", &dbgDebugMoveLights);
-          uint32_t max_cell = ((m_width / GRID_SIZE) * ((m_height + GRID_SIZE_M_ONE) / GRID_SIZE));
-          ImGui::SliderInt("Debug Cell Info Index", &dbgCell, 0, max_cell);
-          ImGui::SliderInt("Debug Z Bin Info Index", &dbgBucket, 0, Z_BUCKETS);
-          ImGui::Checkbox("Use Pixel Shader Average Luminance", &dbgPixelAvgLuminance);
-        }
-      }
-      ImGui::End();
-
       CameraParams   cam;
       int64_t        now = bx::getHPCounter();
       static int64_t last = now;
@@ -1083,6 +1178,12 @@ private:
       sunlight[2] = sunforward2.z;
       bgfx::setUniform(sunlightUniform, sunlight);
 
+      bgfx::setUniform(ambientColourUniform, ambientColour);
+
+      // debug Mode
+      float debugModeVec[4] = {(float)dbgVisMode};
+      bgfx::setUniform(debugUniform, debugModeVec);
+
       bx::mtxScale(mTmp, GLOBAL_SCALE, GLOBAL_SCALE, GLOBAL_SCALE);
 
       float proj[16], i_view[16];
@@ -1116,7 +1217,56 @@ private:
       }
       bx::mtxInverse(i_view, saved_cam_params.view);
 
-      LightInfo viewspaceLights[LIGHT_COUNT];
+      if (ImGui::Begin("Debug Options")) {
+        if (ImGui::Button("Reload Shaders")) {
+          loadAssetData(ShaderParams, SOLID_PROGS);
+        }
+        if (ImGui::CollapsingHeader("Render Control")) {
+          ImGui::SliderFloat3("Sunlight Angle", sunlightAngle, 0.f, 360.f);
+          ImGui::SliderFloat("Sunlight Power", sunlightAngle + 3, 0.5f, 10.f);
+          ImGui::ColorEdit3("Ambient Colour", ambientColour, ImGuiColorEditFlags_RGB);
+          ImGui::SliderFloat("Ambient Power", ambientColour + 3, 0.0f, 2.f);
+          ImGui::SliderFloat("Exposure Key", &curExposure, 0.0001f, 10.f);
+          ImGui::SliderFloat("Exposure Min", &curExposureMin, 0.0001f, 1.f);
+          ImGui::SliderFloat("Exposure Max", &curExposureMax, curExposureMin, 10.f);
+        }
+        if (ImGui::CollapsingHeader("Vis Modes")) {
+          ImGui::RadioButton("none", &dbgVisMode, 0);
+          ImGui::RadioButton("albedo", &dbgVisMode, 1);
+          ImGui::RadioButton("normal", &dbgVisMode, 2);
+          ImGui::RadioButton("metalness", &dbgVisMode, 3);
+          ImGui::RadioButton("roughness", &dbgVisMode, 4);
+          ImGui::RadioButton("diffuse", &dbgVisMode, 5);
+          ImGui::RadioButton("specular", &dbgVisMode, 6);
+        }
+        if (ImGui::CollapsingHeader("Debug")) {
+          char const* shader_names[SOLID_PROGS] = {nullptr};
+          for (uint32_t i = 0; i < SOLID_PROGS; ++i)
+            shader_names[i] = ShaderParams[i].description;
+          ImGui::ListBox("Current Shader", &dbgShader, shader_names, SOLID_PROGS);
+          ImGui::Checkbox("Debug Light Grid", &dbgLightGrid);
+          ImGui::Checkbox("Draw Light Grid Frustum", &dbgLightGridFrustum);
+          ImGui::Checkbox("Enable Light View Updates", &dbgUpdateFrustum);
+          ImGui::Checkbox("Draw Light", &dbgDrawLights);
+          ImGui::Checkbox("Wireframe Lights", &dbgDrawLightsWire);
+          ImGui::Checkbox("Draw Z Bins", &dbgDrawZBin);
+          ImGui::Checkbox("Draw Debug Stats", &dbgDebugStats);
+          ImGui::Checkbox("Enable Light Movement", &dbgDebugMoveLights);
+          uint32_t max_cell = ((m_width / GRID_SIZE) * ((m_height + GRID_SIZE_M_ONE) / GRID_SIZE));
+          ImGui::SliderInt("Debug Cell Info Index", &dbgCell, 0, max_cell);
+          ImGui::SliderInt("Debug Z Bin Info Index", &dbgBucket, 0, Z_BUCKETS);
+          ImGui::Checkbox("Use Pixel Shader Average Luminance", &dbgPixelAvgLuminance);
+        }
+        if (ImGui::CollapsingHeader("CameraMatix")) {
+          ImGui::Text("%f, %f, %f, %f", view[0], view[1], view[2], view[3]);
+          ImGui::Text("%f, %f, %f, %f", view[4], view[5], view[6], view[7]);
+          ImGui::Text("%f, %f, %f, %f", view[8], view[9], view[10], view[11]);
+          ImGui::Text("%f, %f, %f, %f", view[12], view[13], view[14], view[15]);
+        }
+      }
+      ImGui::End();
+
+      LightInfo viewspaceLights[LIGHT_COUNT] = {0};
       uint32_t  zbins[Z_BUCKETS];
       uint16_t  dbg_light_list[LIGHT_COUNT + 1];
       float     zstep;
@@ -1132,6 +1282,44 @@ private:
       if (enableCPUUpdateLightGrid) {
         updateLightingGrid(viewspaceLights, LIGHT_COUNT, &saved_cam_params, grid, dbg_light_list);
       }
+
+      // update the bunny instances
+      uint16_t instanceStride = 64;
+
+      // Set view 0 default viewport.
+      bgfx::setViewRect(RENDER_PASS_COMPUTE, 0, 0, m_width, m_height);
+      bgfx::setViewTransform(RENDER_PASS_COMPUTE, view, proj);
+
+      bgfx::setViewRect(RENDER_PASS_ZPREPASS, 0, 0, m_width, m_height);
+      bgfx::setViewTransform(RENDER_PASS_ZPREPASS, view, proj);
+      bgfx::setViewFrameBuffer(RENDER_PASS_ZPREPASS, zPrePassTarget);
+
+      bgfx::setViewRect(RENDER_PASS_SOLID, 0, 0, m_width, m_height);
+      bgfx::setViewTransform(RENDER_PASS_SOLID, view, proj);
+      bgfx::setViewFrameBuffer(RENDER_PASS_SOLID, mainTarget);
+
+      uint32_t luminance_w = m_width / 2, luminance_h = m_height / 2;
+      for (uint32_t i = 0; i < numLuminanceMips; ++i) {
+        bgfx::setViewRect(RENDER_PASS_LUMINANCE_START + i, 0, 0, luminance_w, luminance_h);
+        bgfx::setViewTransform(RENDER_PASS_LUMINANCE_START + i, idt, orthoProj);
+        if (luminance_w > 1) luminance_w /= 2;
+        if (luminance_h > 1) luminance_h /= 2;
+        bgfx::setViewFrameBuffer(RENDER_PASS_LUMINANCE_START + i, luminanceTargets[i]);
+      }
+
+      bgfx::setViewRect(RENDER_PASS_TONEMAP, 0, 0, m_width, m_height);
+      bgfx::setViewTransform(RENDER_PASS_TONEMAP, idt, orthoProj);
+      bgfx::setViewFrameBuffer(RENDER_PASS_TONEMAP, finalTarget);
+
+      bgfx::setViewRect(RENDER_PASS_DEBUG, 0, 0, m_width, m_height);
+      bgfx::setViewTransform(RENDER_PASS_DEBUG, view, proj);
+      bgfx::setViewFrameBuffer(RENDER_PASS_DEBUG, finalTarget);
+
+      bgfx::setViewRect(RENDER_POST_DEBUG_BLIT, 0, 0, m_width, m_height);
+      bgfx::setViewTransform(RENDER_POST_DEBUG_BLIT, idt, orthoProj);
+
+      bgfx::setViewRect(RENDER_PASS_2DDEBUG, 0, 0, m_width, m_height);
+      bgfx::setViewTransform(RENDER_PASS_2DDEBUG, idt, orthoProj);
 
       // Update the lighting buffers.
       bgfx::updateDynamicVertexBuffer(lightPositionBuffer, 0, bgfx::copy(viewspaceLights, sizeof(viewspaceLights)));
@@ -1162,36 +1350,7 @@ private:
                        ((m_height + (GRID_SIZE_M_ONE)) / GRID_SIZE),
                        1);
       }
-      // update the bunny instances
-      uint16_t instanceStride = 64;
 
-      // Set view 0 default viewport.
-      bgfx::setViewRect(RENDER_PASS_COMPUTE, 0, 0, m_width, m_height);
-      bgfx::setViewTransform(RENDER_PASS_COMPUTE, view, proj);
-      bgfx::setViewRect(RENDER_PASS_ZPREPASS, 0, 0, m_width, m_height);
-      bgfx::setViewTransform(RENDER_PASS_ZPREPASS, view, proj);
-      bgfx::setViewRect(RENDER_PASS_SOLID, 0, 0, m_width, m_height);
-      bgfx::setViewTransform(RENDER_PASS_SOLID, view, proj);
-
-      uint32_t luminance_w = m_width / 2, luminance_h = m_height / 2;
-      for (uint32_t i = 0; i < numLuminanceMips; ++i) {
-        bgfx::setViewRect(RENDER_PASS_LUMINANCE_START + i, 0, 0, luminance_w, luminance_h);
-        bgfx::setViewTransform(RENDER_PASS_LUMINANCE_START + i, idt, orthoProj);
-        if (luminance_w > 1) luminance_w /= 2;
-        if (luminance_h > 1) luminance_h /= 2;
-        bgfx::setViewFrameBuffer(RENDER_PASS_LUMINANCE_START + i, luminanceTargets[i]);
-      }
-
-      bgfx::setViewRect(RENDER_PASS_TONEMAP, 0, 0, m_width, m_height);
-      bgfx::setViewTransform(RENDER_PASS_TONEMAP, idt, orthoProj);
-      bgfx::setViewRect(RENDER_PASS_DEBUG, 0, 0, m_width, m_height);
-      bgfx::setViewTransform(RENDER_PASS_DEBUG, view, proj);
-      bgfx::setViewRect(RENDER_PASS_2DDEBUG, 0, 0, m_width, m_height);
-      bgfx::setViewTransform(RENDER_PASS_2DDEBUG, idt, orthoProj);
-
-      bgfx::setViewFrameBuffer(RENDER_PASS_ZPREPASS, zPrePassTarget);
-      bgfx::setViewFrameBuffer(RENDER_PASS_SOLID, mainTarget);
-      // The remaining passes render to the back buffer
 
       uint64_t state = 0;
 
@@ -1219,16 +1378,55 @@ private:
                     BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA,
                     handles,
                     buffer);
+        for (uint32_t o = 0; o < TOTAL_ORBS; ++o) {
+          float model[16];
+          bx::mtxTranslate(model, Orbs[o].position.x, Orbs[o].position.y, Orbs[o].position.z);
+          bgfx::setUniform(albedoUnform, Orbs[o].colour);
+          float mr[4] = {Orbs[o].metal ? 1.f : 0.f, Orbs[o].roughnes};
+          bgfx::setUniform(metalRoughUniform, mr);
+          bgfx::setBuffer(10, buffer[0], bgfx::Access::Read);
+          bgfx::setBuffer(11, buffer[1], bgfx::Access::Read);
+          bgfx::setBuffer(12, buffer[2], bgfx::Access::Read);
+          bgfx::setBuffer(13, buffer[3], bgfx::Access::Read);
+          bgfx::setBuffer(14, buffer[4], bgfx::Access::Read);
+          mesh_submit(&m_orb,
+                      RENDER_PASS_ZPREPASS,
+                      ShaderParams[dbgShader].zfillProg,
+                      model,
+                      BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
+        }
       }
       // Set instance data buffer.
       mesh_submit(&m_mesh,
                   RENDER_PASS_SOLID,
                   ShaderParams[dbgShader].solidProg,
+                  ShaderParams[dbgShader].solidProgMask,
                   mTmp,
                   BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_TEST_LEQUAL |
                     BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA,
                   handles,
                   buffer);
+      for (uint32_t o = 0; o < TOTAL_ORBS; ++o) {
+        float model[16];
+        bx::mtxScale(model, 2.5f);
+        model[12] = Orbs[o].position.x;
+        model[13] = Orbs[o].position.y;
+        model[14] = Orbs[o].position.z;
+        bgfx::setUniform(albedoUnform, Orbs[o].colour);
+        float mr[4] = {Orbs[o].metal ? 1.f : 0.f, Orbs[o].roughnes};
+        bgfx::setUniform(metalRoughUniform, mr);
+        bgfx::setBuffer(10, buffer[0], bgfx::Access::Read);
+        bgfx::setBuffer(11, buffer[1], bgfx::Access::Read);
+        bgfx::setBuffer(12, buffer[2], bgfx::Access::Read);
+        bgfx::setBuffer(13, buffer[3], bgfx::Access::Read);
+        bgfx::setBuffer(14, buffer[4], bgfx::Access::Read);
+        mesh_submit(&m_orb,
+                    RENDER_PASS_SOLID,
+                    ShaderParams[dbgShader].solidProgNoTex,
+                    model,
+                    BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_TEST_LEQUAL |
+                      BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
+      }
 
       bool enableFullscreenQuad = bgfx::isValid(ShaderParams[dbgShader].fullscreenProg);
       if (enableFullscreenQuad) {
@@ -1294,11 +1492,19 @@ private:
 
       // Tonemap pass
       bgfx::setTexture(0, baseTex, colourTarget);
+      bgfx::setTexture(1, luminanceTex, luminanceMips[numLuminanceMips - 1]);
+      bgfx::setTexture(5, colourLUTTex, colourGradeLUT);
       float exposure_params[4] = {curExposureMin, curExposureMax, curExposure, 0.f};
       bgfx::setUniform(exposureParamsUniform, exposure_params);
       bgfx::setState(BGFX_STATE_RGB_WRITE | BGFX_STATE_MSAA);
       screenSpaceQuad((float)m_width, (float)m_height, s_texelHalf, m_caps->originBottomLeft);
       bgfx::submit(RENDER_PASS_TONEMAP, tonemapProg);
+
+
+      bgfx::setTexture(0, baseTex, finalColourTarget);
+      bgfx::setState(BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_MSAA);
+      screenSpaceQuad((float)m_width, (float)m_height, s_texelHalf, m_caps->originBottomLeft);
+      bgfx::submit(RENDER_POST_DEBUG_BLIT, copyProg);
 
       // Use debug font to print information about this example.
       if (dbgDebugStats) {
