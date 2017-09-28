@@ -20,3 +20,4 @@ SAMPLER2D(s_mask, 4);
 
 // colour LUT
 SAMPLER3D(s_colourLUT, 5);
+SAMPLERCUBE(s_environmentMap, 6);

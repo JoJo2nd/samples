@@ -11,6 +11,7 @@ uniform vec4 u_bucketParams; // z bin bucket size, light grid size, light grid p
 uniform vec4 u_sunlight;
 uniform vec4 u_ambientColour;
 uniform vec4 u_debugMode;
+uniform vec4 u_dynamicLights;
 #if NO_TEXTURES
 uniform vec4 u_albedo; 
 uniform vec4 u_metalrough; // x: metal y: rough
@@ -186,6 +187,7 @@ void main() {
         }
     }
 #endif
+    gl_FragColor.w = 1.0;
 
     // Ambient
     gl_FragColor.rgb = (u_ambientColour.rgb * albedo.rgb) * pow(1-normal.z, 3) * u_ambientColour.a;
@@ -205,6 +207,10 @@ void main() {
             calculateSpecular(normal, half, toEye, lightDir, rough.r, metal ? albedo.rgb : SHADER_NONMETAL_SPEC_COLOUR)
         );
     }
+
+    // dynamic Lights are discarded from cubemap captures.
+    if (u_dynamicLights.x == 0)
+        return;
 
     // use grid assignments
     uint startOffset = light_grid_offset(gl_FragCoord.xy)*MAX_LIGHT_COUNT;
@@ -241,6 +247,4 @@ void main() {
 #if DEBUG_LIGHT_EVAL
     gl_FragColor.r /= 20;
 #endif
-
-    gl_FragColor.w = 1.0;
 }

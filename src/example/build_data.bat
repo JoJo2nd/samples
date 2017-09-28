@@ -10,6 +10,10 @@ set SHADERC=../../external/bgfx/.build/win64_vs2015/bin/shadercRelease
 
 if not exist "%DATADEST%" mkdir "%DATADEST%"
 
+if not exist "%DATADEST%/env" mkdir "%DATADEST%/env"
+
+echo "Make sure this folder exists" > "%DATADEST%/env/.keepme"
+
 call build_meshes.bat
 
 call build_shaders.bat

@@ -24,6 +24,20 @@
 #include "bx/readerwriter.h"
 
 static float s_texelHalf = 0.0f;
+// when > 0 capturing face (dbgCaptureCubemap-1) (0:+X 1:-X 2:+Y 3:-Y 4:+Z 5:-Z)
+bool dbgCaptureCubemap = 0;
+
+bgfx::UniformHandle dynLightsUniform;
+bgfx::UniformHandle cubeFaceUniform;
+bgfx::UniformHandle environmentMapTex;
+
+bgfx::FrameBufferHandle cubemapFaceTarget[6];
+bgfx::FrameBufferHandle irCubemapFaceTarget[6];
+
+bgfx::TextureHandle cubemapDepthTexture;
+bgfx::TextureHandle cubemapFaceTexture;
+bgfx::TextureHandle irCubemapFaceTexture;
+bgfx::TextureHandle irCubemapFaceTextureRead;
 
 struct PosTexCoord0Vertex {
   float m_x;
@@ -378,6 +392,7 @@ private:
   bgfx::ProgramHandle tonemapProg = BGFX_INVALID_HANDLE;
   bgfx::ProgramHandle luminancePixelProg = BGFX_INVALID_HANDLE;
   bgfx::ProgramHandle copyProg = BGFX_INVALID_HANDLE;
+  bgfx::ProgramHandle irConvolveProg = BGFX_INVALID_HANDLE;
 
   bgfx::UniformHandle timeUniform;
   bgfx::UniformHandle sunlightUniform;
@@ -486,6 +501,14 @@ private:
       bgfx::destroy(luminancePixelProg);
       luminancePixelProg = BGFX_INVALID_HANDLE;
     }
+    if (bgfx::isValid(copyProg)) {
+      bgfx::destroy(copyProg);
+      copyProg = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(irConvolveProg)) {
+      bgfx::destroy(irConvolveProg);
+      irConvolveProg = BGFX_INVALID_HANDLE;
+    }
   }
 
   void loadAssetData(RunParams* data, uint32_t data_count) {
@@ -536,6 +559,10 @@ private:
 
     bgfx::Memory const* cs = loadMem(LUMINANCE_AVG_ASSET_PATH);
     logLuminanceAvProg = bgfx::createProgram(bgfx::createShader(cs), true);
+
+    vs = loadMem(VS_DEBUG_ASSET_PATH);
+    ps = loadMem(FS_IR_CONVOLVE_ASSET_PATH);
+    irConvolveProg = bgfx::createProgram(bgfx::createShader(vs), bgfx::createShader(ps), true);
   }
 
   void init(int32_t _argc, const char* const* _argv, uint32_t _width, uint32_t _height) {
@@ -628,6 +655,8 @@ private:
     metalRoughUniform = bgfx::createUniform("u_metalrough", bgfx::UniformType::Vec4);
     debugUniform = bgfx::createUniform("u_debugMode", bgfx::UniformType::Vec4);
     ambientColourUniform = bgfx::createUniform("u_ambientColour", bgfx::UniformType::Vec4);
+    dynLightsUniform = bgfx::createUniform("u_dynamicLights", bgfx::UniformType::Vec4);
+    cubeFaceUniform = bgfx::createUniform("u_cubeFace", bgfx::UniformType::Vec4);
 
     baseTex = bgfx::createUniform("s_base", bgfx::UniformType::Int1);
     normalTex = bgfx::createUniform("s_normal", bgfx::UniformType::Int1);
@@ -636,6 +665,7 @@ private:
     maskTex = bgfx::createUniform("s_mask", bgfx::UniformType::Int1);
     luminanceTex = bgfx::createUniform("s_luminance", bgfx::UniformType::Int1);
     colourLUTTex = bgfx::createUniform("s_colourLUT", bgfx::UniformType::Int1);
+    environmentMapTex = bgfx::createUniform("s_environmentMap", bgfx::UniformType::Int1);
 
     lights = new LightInit[LIGHT_COUNT];
     float  scale = 4.f;
@@ -731,6 +761,19 @@ private:
       if (luminance_h > 1) luminance_h /= 2;
     }
 
+    // Create cubemap framebuffers
+    cubemapDepthTexture = bgfx::createTexture2D(m_width, m_width, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_RT);
+    cubemapFaceTexture = bgfx::createTextureCube(m_width, false, 1, bgfx::TextureFormat::RGBA16F, 
+      BGFX_TEXTURE_RT | BGFX_TEXTURE_U_CLAMP | BGFX_TEXTURE_V_CLAMP | BGFX_TEXTURE_W_CLAMP);
+    irCubemapFaceTexture = bgfx::createTextureCube(IR_MAP_DIM, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_RT);
+    irCubemapFaceTextureRead = bgfx::createTextureCube(IR_MAP_DIM, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_READ_BACK | BGFX_TEXTURE_BLIT_DST);
+    for (uint32_t i = 0; i < 6; ++i) {
+      bgfx::Attachment cm_att[2] = {{cubemapFaceTexture, 0, (uint16_t)i}, {cubemapDepthTexture, 0, 0}};
+      cubemapFaceTarget[i] = bgfx::createFrameBuffer(2, cm_att);
+      bgfx::Attachment ir_cm_att[2] = {{irCubemapFaceTexture, 0, (uint16_t)i}};
+      irCubemapFaceTarget[i] = bgfx::createFrameBuffer(1, ir_cm_att);
+    }
+
     // Set view 0 clear state.
     bgfx::setViewClear(RENDER_PASS_COMPUTE, BGFX_CLEAR_NONE, 0x303030ff, 1.0f, 0);
     bgfx::setViewName(RENDER_PASS_COMPUTE, "Compute Pass");
@@ -760,6 +803,26 @@ private:
     bgfx::setViewClear(RENDER_PASS_2DDEBUG, BGFX_CLEAR_NONE, 0, 1.0f, 0);
     bgfx::setViewName(RENDER_PASS_2DDEBUG, "2D Debug Pass");
     bgfx::setViewMode(RENDER_PASS_2DDEBUG, bgfx::ViewMode::Sequential);
+
+    static char const* pass_names[6] = {
+      "Cubemap Face +X", "Cubemap Face -X", "Cubemap Face +Y", "Cubemap Face -Y", "Cubemap Face +Z", "Cubemap Face -Z",
+    };
+    static char const* ir_pass_names[6] = {
+      "Ir Cubemap Conv +X", "Ir Cubemap Conv -X", "Ir Cubemap Conv +Y", "Ir Cubemap Conv -Y", "Ir Cubemap Conv +Z", "Ir Cubemap Conv -Z",
+    };
+    for (uint32_t i = 0; i < 6; ++i) {
+      bgfx::setViewClear(RENDER_PASS_CUBEMAP_FACE_PX + i, BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
+      bgfx::setViewName(RENDER_PASS_CUBEMAP_FACE_PX + i, pass_names[i]);
+      bgfx::setViewMode(RENDER_PASS_CUBEMAP_FACE_PX + i, bgfx::ViewMode::Sequential);
+
+      bgfx::setViewClear(RENDER_PASS_CUBEMAP_IR_CONV_FACE_PX + i, BGFX_CLEAR_NONE, 0, 1.0f, 0);
+      bgfx::setViewName(RENDER_PASS_CUBEMAP_IR_CONV_FACE_PX + i, ir_pass_names[i]);
+      bgfx::setViewMode(RENDER_PASS_CUBEMAP_IR_CONV_FACE_PX + i, bgfx::ViewMode::Sequential);
+    }
+
+    bgfx::setViewClear(RENDER_PASS_GPU_COPY_LAST, BGFX_CLEAR_NONE, 0, 1.0f, 0);
+    bgfx::setViewName(RENDER_PASS_GPU_COPY_LAST, "GPU Copies");
+    bgfx::setViewMode(RENDER_PASS_GPU_COPY_LAST, bgfx::ViewMode::Sequential);
 
     ddInit();
     imguiCreate();
@@ -854,8 +917,10 @@ private:
     uint32_t cur_l = 0, end_l = light_count;
     for (; cur_l < end_l; ++cur_l) {
       if (viewSpaceLights[cur_l].p.z + viewSpaceLights[cur_l].radius < 0.f) continue;
-      int32_t min_z = (int32_t)MIN(fabsf((viewSpaceLights[cur_l].p.z - viewSpaceLights[cur_l].radius) / z_step), Z_BUCKETS - 1);
-      int32_t max_z = (int32_t)MIN(fabsf((viewSpaceLights[cur_l].p.z + viewSpaceLights[cur_l].radius) / z_step), Z_BUCKETS - 1);
+      int32_t min_z =
+        (int32_t)MIN(fabsf((viewSpaceLights[cur_l].p.z - viewSpaceLights[cur_l].radius) / z_step), Z_BUCKETS - 1);
+      int32_t max_z =
+        (int32_t)MIN(fabsf((viewSpaceLights[cur_l].p.z + viewSpaceLights[cur_l].radius) / z_step), Z_BUCKETS - 1);
       for (int32_t cz = min_z; cz <= max_z; ++cz) {
         if (cz < 0) continue;
         uint16_t hiword = (zbin[cz] & 0xFFFF0000) >> 16;
@@ -1139,6 +1204,7 @@ private:
                       uint16_t(m_width),
                       uint16_t(m_height));
 
+      float          uniformDataTmp[4] = {0};
       CameraParams   cam;
       int64_t        now = bx::getHPCounter();
       static int64_t last = now;
@@ -1217,7 +1283,7 @@ private:
       }
       bx::mtxInverse(i_view, saved_cam_params.view);
 
-      if (ImGui::Begin("Debug Options")) {
+      if (ImGui::Begin("Debug Options") /*&& dbgCaptureCubemap == 0*/) {
         if (ImGui::Button("Reload Shaders")) {
           loadAssetData(ShaderParams, SOLID_PROGS);
         }
@@ -1263,6 +1329,13 @@ private:
           ImGui::Text("%f, %f, %f, %f", view[8], view[9], view[10], view[11]);
           ImGui::Text("%f, %f, %f, %f", view[12], view[13], view[14], view[15]);
         }
+        //if (ImGui::Button("Capture Cubemap")) {
+        //  dbgCaptureCubemap = 1;
+        //}
+        ImGui::Checkbox("Capture IR test cubemap", &dbgCaptureCubemap);
+        //static int32_t cubemapface = 0;
+        //ImGui::SliderInt("Current Cubemap Face", &cubemapface, 0, 5);
+        //ImGui::Image(cubemapFaceTexture[cubemapface], ImVec2(256, 256));
       }
       ImGui::End();
 
@@ -1289,6 +1362,9 @@ private:
       // Set view 0 default viewport.
       bgfx::setViewRect(RENDER_PASS_COMPUTE, 0, 0, m_width, m_height);
       bgfx::setViewTransform(RENDER_PASS_COMPUTE, view, proj);
+
+      bgfx::setViewRect(RENDER_PASS_GPU_COPY_LAST, 0, 0, m_width, m_height);
+      bgfx::setViewTransform(RENDER_PASS_GPU_COPY_LAST, view, proj);
 
       bgfx::setViewRect(RENDER_PASS_ZPREPASS, 0, 0, m_width, m_height);
       bgfx::setViewTransform(RENDER_PASS_ZPREPASS, view, proj);
@@ -1320,6 +1396,50 @@ private:
 
       bgfx::setViewRect(RENDER_PASS_2DDEBUG, 0, 0, m_width, m_height);
       bgfx::setViewTransform(RENDER_PASS_2DDEBUG, idt, orthoProj);
+
+      static vec3_t r_dir[6] = {
+        {0.f, 0.f, -1.f}, {0.f, 0.f, 1.f}, {-1.f, 0.f, 0.f}, {1.f, 0.f, 0.f}, {1.f, 0.f, 0.f}, {-1.f, 0.f, 0.f},
+      };
+      static vec3_t up_dir[6] = {
+        {0.f, 1.f, 0.f}, {0.f, 1.f, 0.f}, {0.f, 0.f, 1.f}, {0.f, 0.f, 1.f}, {0.f, 1.f, 0.f}, {0.f, 1.f, 0.f},
+      };
+      float  cm_view[6][16];
+      vec3_t cur_cam_pos = {cam.x, cam.y, cam.z};
+      for (uint32_t i = 0; i < 6; ++i) {
+        float  cm_proj[16], v_mtx_tmp[16] = {0};
+        vec3_t r = r_dir[i], up = up_dir[i], fw;
+
+        bx::mtxProj(cm_proj, 90.f, 1.f, cam.nearPlane, cam.farPlane, false);
+        vec3_cross(&fw, &r, &up);
+        v_mtx_tmp[0] = r.x;
+        v_mtx_tmp[1] = r.y;
+        v_mtx_tmp[2] = r.z;
+        v_mtx_tmp[3] = 0.f;
+        v_mtx_tmp[4] = up.x;
+        v_mtx_tmp[5] = up.y;
+        v_mtx_tmp[6] = up.z;
+        v_mtx_tmp[7] = 0.f;
+        v_mtx_tmp[8] = fw.x;
+        v_mtx_tmp[9] = fw.y;
+        v_mtx_tmp[10] = fw.z;
+        v_mtx_tmp[11] = 0.f;
+        v_mtx_tmp[12] = cur_cam_pos.x;
+        v_mtx_tmp[13] = cur_cam_pos.y;
+        v_mtx_tmp[14] = cur_cam_pos.z;
+        v_mtx_tmp[15] = 1.f;
+        bx::mtxInverse(cm_view[i], v_mtx_tmp);
+
+        bgfx::setViewRect(RENDER_PASS_CUBEMAP_FACE_PX + i, 0, 0, m_width, m_width);
+        bgfx::setViewTransform(RENDER_PASS_CUBEMAP_FACE_PX + i, cm_view[i], cm_proj);
+        bgfx::setViewFrameBuffer(RENDER_PASS_CUBEMAP_FACE_PX + i, cubemapFaceTarget[i]);
+
+        bgfx::setViewRect(RENDER_PASS_CUBEMAP_IR_CONV_FACE_PX + i, 0, 0, IR_MAP_DIM, IR_MAP_DIM);
+        bgfx::setViewTransform(RENDER_PASS_CUBEMAP_IR_CONV_FACE_PX + i, idt, orthoProj);
+        bgfx::setViewFrameBuffer(RENDER_PASS_CUBEMAP_IR_CONV_FACE_PX + i, irCubemapFaceTarget[i]);
+      }
+
+      uniformDataTmp[0] = 1.f;
+      bgfx::setUniform(dynLightsUniform, uniformDataTmp);
 
       // Update the lighting buffers.
       bgfx::updateDynamicVertexBuffer(lightPositionBuffer, 0, bgfx::copy(viewspaceLights, sizeof(viewspaceLights)));
@@ -1505,6 +1625,70 @@ private:
       bgfx::setState(BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_MSAA);
       screenSpaceQuad((float)m_width, (float)m_height, s_texelHalf, m_caps->originBottomLeft);
       bgfx::submit(RENDER_POST_DEBUG_BLIT, copyProg);
+
+      // submit any cubemap stuff
+      // disable lights
+      uniformDataTmp[0] = 0.f;
+      bgfx::setUniform(dynLightsUniform, uniformDataTmp);
+
+      for (uint32_t i = 0; i < 6; ++i) {
+        bx::vec3MulMtx(sunforward.v, sunforward2.v, cm_view[i]);
+        // Set sunlight in view space
+        vec3_norm(&sunforward2, &sunforward);
+        sunlight[0] = sunforward2.x;
+        sunlight[1] = sunforward2.y;
+        sunlight[2] = sunforward2.z;
+        bgfx::setUniform(sunlightUniform, sunlight);
+        mesh_submit(&m_mesh,
+                    RENDER_PASS_CUBEMAP_FACE_PX + i,
+                    ShaderParams[dbgShader].solidProg,
+                    ShaderParams[dbgShader].solidProgMask,
+                    mTmp,
+                    BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_TEST_LEQUAL |
+                      BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA,
+                    handles,
+                    buffer);
+        for (uint32_t o = 0; o < TOTAL_ORBS; ++o) {
+          float model[16];
+          bx::mtxScale(model, 2.5f);
+          model[12] = Orbs[o].position.x;
+          model[13] = Orbs[o].position.y;
+          model[14] = Orbs[o].position.z;
+          bgfx::setUniform(albedoUnform, Orbs[o].colour);
+          float mr[4] = {Orbs[o].metal ? 1.f : 0.f, Orbs[o].roughnes};
+          bgfx::setUniform(metalRoughUniform, mr);
+          bgfx::setBuffer(10, buffer[0], bgfx::Access::Read);
+          bgfx::setBuffer(11, buffer[1], bgfx::Access::Read);
+          bgfx::setBuffer(12, buffer[2], bgfx::Access::Read);
+          bgfx::setBuffer(13, buffer[3], bgfx::Access::Read);
+          bgfx::setBuffer(14, buffer[4], bgfx::Access::Read);
+          mesh_submit(&m_orb,
+                      RENDER_PASS_CUBEMAP_FACE_PX + i,
+                      ShaderParams[dbgShader].solidProgNoTex,
+                      model,
+                      BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_TEST_LEQUAL |
+                        BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
+        }
+      }
+
+      if (dbgCaptureCubemap) {
+        float faceUniform[4];
+        for (uint32_t i = 0; i < 6; ++i) {
+          faceUniform[0] = (float)i;
+          bgfx::setState(BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_MSAA);
+          bgfx::setUniform(cubeFaceUniform, faceUniform);
+          bgfx::setTexture(6, environmentMapTex, cubemapFaceTexture);
+          screenSpaceQuad(IR_MAP_DIM, IR_MAP_DIM, s_texelHalf, m_caps->originBottomLeft);
+          bgfx::submit(RENDER_PASS_CUBEMAP_IR_CONV_FACE_PX + i, irConvolveProg);
+        }
+
+        // copy to non-vram
+        for (uint32_t i=0; i < 6; ++i) {
+          bgfx::blit(RENDER_PASS_GPU_COPY_LAST, 
+            irCubemapFaceTextureRead, 0, 0, 0, i,
+            irCubemapFaceTexture, 0, 0, 0, i);
+        }
+      }
 
       // Use debug font to print information about this example.
       if (dbgDebugStats) {

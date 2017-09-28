@@ -14,6 +14,21 @@
 #define RENDER_POST_DEBUG_BLIT (51)
 #define RENDER_PASS_2DDEBUG (52)
 
+#define RENDER_PASS_CUBEMAP_FACE_PX (64)
+#define RENDER_PASS_CUBEMAP_FACE_MX (65)
+#define RENDER_PASS_CUBEMAP_FACE_PY (66)
+#define RENDER_PASS_CUBEMAP_FACE_MY (67)
+#define RENDER_PASS_CUBEMAP_FACE_PZ (68)
+#define RENDER_PASS_CUBEMAP_FACE_MZ (69)
+
+#define RENDER_PASS_CUBEMAP_IR_CONV_FACE_PX (70)
+#define RENDER_PASS_CUBEMAP_IR_CONV_FACE_MX (71)
+#define RENDER_PASS_CUBEMAP_IR_CONV_FACE_PY (72)
+#define RENDER_PASS_CUBEMAP_IR_CONV_FACE_MY (73)
+#define RENDER_PASS_CUBEMAP_IR_CONV_FACE_PZ (74)
+#define RENDER_PASS_CUBEMAP_IR_CONV_FACE_MZ (75)
+
+#define RENDER_PASS_GPU_COPY_LAST (100)
 
 #define INSTANCE_GIRD_SIZE (10)
 #define TOTAL_GRID_COUNT (INSTANCE_GIRD_SIZE * INSTANCE_GIRD_SIZE)
@@ -35,6 +50,7 @@
 #define TOTAL_ORBS (60)
 
 #define COLOUR_LUT_DIM (16)
+#define IR_MAP_DIM (32)
 
 #define MESH_ASSET_PATH ("data/lostempire.mesh")
 #define SPONZA_MESH_ASSET_PATH ("data/sponza_pbr.mesh")
@@ -55,6 +71,7 @@
 #define TONEMAP_ASSET_PATH ("data/tonemap.ps")
 #define FS_LUMINANCE_AVG_ASSET_PATH ("data/log_luminance_avg.ps")
 #define LUMINANCE_AVG_ASSET_PATH ("data/log_luminance_avg.cs")
+#define FS_IR_CONVOLVE_ASSET_PATH ("data/ir_convolve.ps")
 
 #define VS_Z_FILL ("data/zfill.vs")
 #define PS_Z_FILL ("data/zfill.ps")
