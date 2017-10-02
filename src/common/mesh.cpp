@@ -221,6 +221,8 @@ void mesh_submit(Mesh*                            m,
 
     if (group.m_prims[0].m_materialIndex >= 0) {
       MaterialData* mdat = m->materials->materials + group.m_prims[0].m_materialIndex;
+      if (!bgfx::isValid(maskprogram) && (mdat->flags & MATERIAL_MASK_FLAG)) continue;
+
       for (uint32_t tt = 0; tt < MATERIAL_MAX; ++tt) {
         if (mdat->flags & (1 << tt)) {
           bgfx::setTexture(tt, textures[tt], mdat->all[tt]);

@@ -28,7 +28,13 @@
 #define RENDER_PASS_CUBEMAP_IR_CONV_FACE_PZ (74)
 #define RENDER_PASS_CUBEMAP_IR_CONV_FACE_MZ (75)
 
-#define RENDER_PASS_GPU_COPY_LAST (100)
+#define RENDER_PASS_BDRF_CONVOLVE (76)
+
+// The first render pass
+#define RENDER_PASS_CUBEMAP_SIR_CONV_FIRST (100)
+
+#define RENDER_PASS_GPU_COPY_LAST (200)
+
 
 #define INSTANCE_GIRD_SIZE (10)
 #define TOTAL_GRID_COUNT (INSTANCE_GIRD_SIZE * INSTANCE_GIRD_SIZE)
@@ -51,6 +57,12 @@
 
 #define COLOUR_LUT_DIM (16)
 #define IR_MAP_DIM (32)
+#define SIR_MAP_DIM (512)
+#define SIR_MIP_COUNT (10)                 // including 512 mip
+#define SIR_MIP_CHAIN_SIZE_BYTES (2796200) // includes
+#define BDRF_DIM (128)
+
+#define ENV_MAP_GRID_DIM (64.f)
 
 #define MESH_ASSET_PATH ("data/lostempire.mesh")
 #define SPONZA_MESH_ASSET_PATH ("data/sponza_pbr.mesh")
@@ -72,6 +84,8 @@
 #define FS_LUMINANCE_AVG_ASSET_PATH ("data/log_luminance_avg.ps")
 #define LUMINANCE_AVG_ASSET_PATH ("data/log_luminance_avg.cs")
 #define FS_IR_CONVOLVE_ASSET_PATH ("data/ir_convolve.ps")
+#define FS_SIR_CONVOLVE_ASSET_PATH ("data/sir_convolve.ps")
+#define FS_BRDF_CONVOLVE_ASSET_PATH ("data/brdf_convolve.ps")
 
 #define VS_Z_FILL ("data/zfill.vs")
 #define PS_Z_FILL ("data/zfill.ps")

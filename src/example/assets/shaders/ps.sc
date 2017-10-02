@@ -142,6 +142,7 @@ vec3 readNormalMap(vec3 v_norm, vec3 v_tang, vec3 v_bitang, vec2 uv) {
 }
 
 void main() {
+    vec3 sunlight_vs = normalize(mul(u_view, vec4(u_sunlight.xyz, 1))).xyz;
     uint2 grid_info = light_grid_data(gl_FragCoord.xy);
     uint2 z_bin = read_z_bin(v_view.z);
 
@@ -190,14 +191,14 @@ void main() {
     gl_FragColor.w = 1.0;
 
     // Ambient
-    gl_FragColor.rgb = (u_ambientColour.rgb * albedo.rgb) * pow(1-normal.z, 3) * u_ambientColour.a;
+    gl_FragColor.rgb = (u_ambientColour.rgb * albedo.rgb) * u_ambientColour.a;
     if (u_debugMode.x != 0.0 && u_debugMode.x != 5.0) {
         gl_FragColor.rgb *= 0;
     }
 
     // Sunlight
     {
-        vec3 lightDir = -(u_sunlight.xyz);
+        vec3 lightDir = -(sunlight_vs.xyz);
         vec3 ndotl = saturate(dot(lightDir, normal));    
         vec3 toEye = -normalize(v_view);
         vec3 half = normalize(toEye + lightDir);
@@ -209,8 +210,9 @@ void main() {
     }
 
     // dynamic Lights are discarded from cubemap captures.
-    if (u_dynamicLights.x == 0)
+    if (u_dynamicLights.x == 0) {
         return;
+    }
 
     // use grid assignments
     uint startOffset = light_grid_offset(gl_FragCoord.xy)*MAX_LIGHT_COUNT;

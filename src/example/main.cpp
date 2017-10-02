@@ -24,8 +24,11 @@
 #include "bx/readerwriter.h"
 
 static float s_texelHalf = 0.0f;
-// when > 0 capturing face (dbgCaptureCubemap-1) (0:+X 1:-X 2:+Y 3:-Y 4:+Z 5:-Z)
-bool dbgCaptureCubemap = 0;
+bool         dbgCaptureCubemap = 0; // when true, capturing cubemap faces
+bool         dbgWaitingOnReadback = 0;
+
+uint32_t dbgCaptureReadyFrame = 0;
+uint32_t frameReturn;
 
 bgfx::UniformHandle dynLightsUniform;
 bgfx::UniformHandle cubeFaceUniform;
@@ -33,11 +36,31 @@ bgfx::UniformHandle environmentMapTex;
 
 bgfx::FrameBufferHandle cubemapFaceTarget[6];
 bgfx::FrameBufferHandle irCubemapFaceTarget[6];
+bgfx::FrameBufferHandle sirCubemapFaceTarget[6][SIR_MIP_COUNT];
+bgfx::FrameBufferHandle bdrfConvolveTarget;
 
 bgfx::TextureHandle cubemapDepthTexture;
 bgfx::TextureHandle cubemapFaceTexture;
+bgfx::TextureHandle cubemapFaceTextureRead[6];
 bgfx::TextureHandle irCubemapFaceTexture;
-bgfx::TextureHandle irCubemapFaceTextureRead;
+bgfx::TextureHandle irCubemapFaceTextureRead[6];
+bgfx::TextureHandle sirCubemapFaceTexture[SIR_MIP_COUNT];
+bgfx::TextureHandle sirCubemapFaceTextureRead[6][SIR_MIP_COUNT];
+bgfx::TextureHandle bdrfConvolveTexture;
+bgfx::TextureHandle bdrfConvolveTextureRead;
+
+float    totalBoundsMin[3] = {FLT_MAX, FLT_MAX, FLT_MAX};
+float    totalBoundsMax[3] = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+uint32_t envMapGridDim[3];
+uint32_t envMapCurrentCell[3];
+uint32_t sirTotalWriteSize;
+uint32_t sirMipLevelSizeBytes[SIR_MIP_COUNT];           //*6 to get faces
+uint32_t sirMipFaceWriteOffsetLookUp[SIR_MIP_COUNT][6]; //
+
+void* irCubemapFaceTextureReadCPUData;
+void* cubemapFaceTextureReadCPUData;
+void* sirCubemapFaceTextureReadCPUData;
+void* bdrfTextureReadCPUData;
 
 struct PosTexCoord0Vertex {
   float m_x;
@@ -393,6 +416,8 @@ private:
   bgfx::ProgramHandle luminancePixelProg = BGFX_INVALID_HANDLE;
   bgfx::ProgramHandle copyProg = BGFX_INVALID_HANDLE;
   bgfx::ProgramHandle irConvolveProg = BGFX_INVALID_HANDLE;
+  bgfx::ProgramHandle sirConvolveProg = BGFX_INVALID_HANDLE;
+  bgfx::ProgramHandle bdrfConvolveProg = BGFX_INVALID_HANDLE;
 
   bgfx::UniformHandle timeUniform;
   bgfx::UniformHandle sunlightUniform;
@@ -509,6 +534,14 @@ private:
       bgfx::destroy(irConvolveProg);
       irConvolveProg = BGFX_INVALID_HANDLE;
     }
+    if (bgfx::isValid(sirConvolveProg)) {
+      bgfx::destroy(sirConvolveProg);
+      sirConvolveProg = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(bdrfConvolveProg)) {
+      bgfx::destroy(bdrfConvolveProg);
+      bdrfConvolveProg = BGFX_INVALID_HANDLE;
+    }
   }
 
   void loadAssetData(RunParams* data, uint32_t data_count) {
@@ -563,6 +596,14 @@ private:
     vs = loadMem(VS_DEBUG_ASSET_PATH);
     ps = loadMem(FS_IR_CONVOLVE_ASSET_PATH);
     irConvolveProg = bgfx::createProgram(bgfx::createShader(vs), bgfx::createShader(ps), true);
+
+    vs = loadMem(VS_DEBUG_ASSET_PATH);
+    ps = loadMem(FS_SIR_CONVOLVE_ASSET_PATH);
+    sirConvolveProg = bgfx::createProgram(bgfx::createShader(vs), bgfx::createShader(ps), true);
+
+    vs = loadMem(VS_DEBUG_ASSET_PATH);
+    ps = loadMem(FS_BRDF_CONVOLVE_ASSET_PATH);
+    bdrfConvolveProg = bgfx::createProgram(bgfx::createShader(vs), bgfx::createShader(ps), true);
   }
 
   void init(int32_t _argc, const char* const* _argv, uint32_t _width, uint32_t _height) {
@@ -608,15 +649,18 @@ private:
 
     loadAssetData(ShaderParams, SOLID_PROGS);
 
-    float ab_min[3] = {FLT_MAX, FLT_MAX, FLT_MAX};
-    float ab_max[3] = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
-
     for (size_t i = 0, n = m_mesh.m_groups.size(); i < n; ++i) {
       for (uint32_t j = 0; j < 3; ++j) {
-        ab_min[j] = MIN(m_mesh.m_groups[i].m_aabb.m_min[j] * GLOBAL_SCALE, ab_min[j]);
-        ab_max[j] = MAX(m_mesh.m_groups[i].m_aabb.m_max[j] * GLOBAL_SCALE, ab_max[j]);
+        totalBoundsMin[j] = MIN(m_mesh.m_groups[i].m_aabb.m_min[j] * GLOBAL_SCALE, totalBoundsMin[j]);
+        totalBoundsMax[j] = MAX(m_mesh.m_groups[i].m_aabb.m_max[j] * GLOBAL_SCALE, totalBoundsMax[j]);
       }
     }
+
+    for (uint32_t i = 0; i < 3; ++i) {
+      envMapGridDim[i] =
+        (uint32_t)(((totalBoundsMax[i] - totalBoundsMin[i]) + (ENV_MAP_GRID_DIM - 1.f)) / ENV_MAP_GRID_DIM);
+    }
+    uint32_t total_grid_count = envMapGridDim[0] * envMapGridDim[1] * envMapGridDim[2];
 
     colourGradeSrc = new half_t[COLOUR_LUT_DIM * COLOUR_LUT_DIM * COLOUR_LUT_DIM * 4];
     colourGradeDst = new half_t[COLOUR_LUT_DIM * COLOUR_LUT_DIM * COLOUR_LUT_DIM * 4];
@@ -679,12 +723,14 @@ private:
       {1.f * scale, 1.f * scale, 1.f * scale},
     };
     float range[3] = {
-      (ab_max[0] - ab_min[0]), (ab_max[1] - ab_min[1]), (ab_max[2] - ab_min[2]),
+      (totalBoundsMax[0] - totalBoundsMin[0]),
+      (totalBoundsMax[1] - totalBoundsMin[1]),
+      (totalBoundsMax[2] - totalBoundsMin[2]),
     };
     for (uint32_t i = 0; i < LIGHT_COUNT; ++i) {
-      lights[i].p.x = (ab_min[0]) + ((float)rand() / RAND_MAX) * range[0];
-      lights[i].p.y = (ab_min[1]) + ((float)rand() / RAND_MAX) * range[1];
-      lights[i].p.z = (ab_min[2]) + ((float)rand() / RAND_MAX) * range[2];
+      lights[i].p.x = (totalBoundsMin[0]) + ((float)rand() / RAND_MAX) * range[0];
+      lights[i].p.y = (totalBoundsMin[1]) + ((float)rand() / RAND_MAX) * range[1];
+      lights[i].p.z = (totalBoundsMin[2]) + ((float)rand() / RAND_MAX) * range[2];
       lights[i].radius = (((float)rand() / RAND_MAX) * 10.f) + 10.f;
       lights[i].col = colours[rand() % 7];
       lights[i].r[0] = (((float)rand() / RAND_MAX) * 5.f) + 5.f;
@@ -724,7 +770,7 @@ private:
     grid = new uint16_t[LIGHT_GRID_SPACE * sizeof(uint16_t) * MAX_LIGHT_GRID_COUNT];
 
     zPrePassTarget = bgfx::createFrameBuffer(bgfx::BackbufferRatio::Equal, bgfx::TextureFormat::D32F);
-    // BGFX can handle sRGB render targets, so use a 16bit float and resolve out end frame
+    // BGFX can't handle sRGB render targets, so use a 16bit float and resolve out end frame
     colourTarget =
       bgfx::createTexture2D(bgfx::BackbufferRatio::Equal, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_RT);
     bgfx::Attachment main_attachments[2] = {{colourTarget, 0, 0}, {bgfx::getTexture(zPrePassTarget, 0), 0, 0}};
@@ -749,6 +795,11 @@ private:
       floatVertexDecl,
       BGFX_BUFFER_COMPUTE_READ_WRITE | BGFX_BUFFER_COMPUTE_FORMAT_32x1 | BGFX_BUFFER_COMPUTE_TYPE_FLOAT);
 
+    bdrfConvolveTexture = bgfx::createTexture2D(BDRF_DIM, BDRF_DIM, false, 1, bgfx::TextureFormat::RG16F, BGFX_TEXTURE_RT);
+    bdrfConvolveTextureRead =
+      bgfx::createTexture2D(BDRF_DIM, BDRF_DIM, false, 1, bgfx::TextureFormat::RG16F, BGFX_TEXTURE_READ_BACK | BGFX_TEXTURE_BLIT_DST);
+    bdrfConvolveTarget = bgfx::createFrameBuffer(1, &bdrfConvolveTexture);
+
     numLuminanceMips = 0;
     uint32_t luminance_w = m_width / 2, luminance_h = m_height / 2;
 
@@ -763,15 +814,37 @@ private:
 
     // Create cubemap framebuffers
     cubemapDepthTexture = bgfx::createTexture2D(m_width, m_width, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_RT);
-    cubemapFaceTexture = bgfx::createTextureCube(m_width, false, 1, bgfx::TextureFormat::RGBA16F, 
-      BGFX_TEXTURE_RT | BGFX_TEXTURE_U_CLAMP | BGFX_TEXTURE_V_CLAMP | BGFX_TEXTURE_W_CLAMP);
+    cubemapFaceTexture =
+      bgfx::createTextureCube(m_width,
+                              false,
+                              1,
+                              bgfx::TextureFormat::RGBA16F,
+                              BGFX_TEXTURE_RT | BGFX_TEXTURE_U_CLAMP | BGFX_TEXTURE_V_CLAMP | BGFX_TEXTURE_W_CLAMP);
     irCubemapFaceTexture = bgfx::createTextureCube(IR_MAP_DIM, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_RT);
-    irCubemapFaceTextureRead = bgfx::createTextureCube(IR_MAP_DIM, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_READ_BACK | BGFX_TEXTURE_BLIT_DST);
     for (uint32_t i = 0; i < 6; ++i) {
       bgfx::Attachment cm_att[2] = {{cubemapFaceTexture, 0, (uint16_t)i}, {cubemapDepthTexture, 0, 0}};
       cubemapFaceTarget[i] = bgfx::createFrameBuffer(2, cm_att);
       bgfx::Attachment ir_cm_att[2] = {{irCubemapFaceTexture, 0, (uint16_t)i}};
       irCubemapFaceTarget[i] = bgfx::createFrameBuffer(1, ir_cm_att);
+
+      cubemapFaceTextureRead[i] = bgfx::createTexture2D(
+        m_width, m_width, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_READ_BACK | BGFX_TEXTURE_BLIT_DST);
+      irCubemapFaceTextureRead[i] = bgfx::createTexture2D(
+        IR_MAP_DIM, IR_MAP_DIM, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_READ_BACK | BGFX_TEXTURE_BLIT_DST);
+
+      for (uint32_t j = 0; j < SIR_MIP_COUNT; ++j) {
+        if (i == 0)
+          sirCubemapFaceTexture[j] =
+            bgfx::createTextureCube(SIR_MAP_DIM >> j, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_RT);
+        bgfx::Attachment sir_cm_att[2] = {{sirCubemapFaceTexture[j], (uint16_t)0, (uint16_t)i}};
+        sirCubemapFaceTarget[i][j] = bgfx::createFrameBuffer(1, sir_cm_att);
+        sirCubemapFaceTextureRead[i][j] = bgfx::createTexture2D(SIR_MAP_DIM >> j,
+                                                                SIR_MAP_DIM >> j,
+                                                                false,
+                                                                1,
+                                                                bgfx::TextureFormat::RGBA16F,
+                                                                BGFX_TEXTURE_READ_BACK | BGFX_TEXTURE_BLIT_DST);
+      }
     }
 
     // Set view 0 clear state.
@@ -808,17 +881,47 @@ private:
       "Cubemap Face +X", "Cubemap Face -X", "Cubemap Face +Y", "Cubemap Face -Y", "Cubemap Face +Z", "Cubemap Face -Z",
     };
     static char const* ir_pass_names[6] = {
-      "Ir Cubemap Conv +X", "Ir Cubemap Conv -X", "Ir Cubemap Conv +Y", "Ir Cubemap Conv -Y", "Ir Cubemap Conv +Z", "Ir Cubemap Conv -Z",
+      "Ir Cubemap Conv +X",
+      "Ir Cubemap Conv -X",
+      "Ir Cubemap Conv +Y",
+      "Ir Cubemap Conv -Y",
+      "Ir Cubemap Conv +Z",
+      "Ir Cubemap Conv -Z",
+    };
+    static char const* face_names[6] = {
+      "+X", "-X", "+Y", "-Y", "+Z", "-Z",
     };
     for (uint32_t i = 0; i < 6; ++i) {
-      bgfx::setViewClear(RENDER_PASS_CUBEMAP_FACE_PX + i, BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
+      bgfx::setViewClear(RENDER_PASS_CUBEMAP_FACE_PX + i, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
       bgfx::setViewName(RENDER_PASS_CUBEMAP_FACE_PX + i, pass_names[i]);
       bgfx::setViewMode(RENDER_PASS_CUBEMAP_FACE_PX + i, bgfx::ViewMode::Sequential);
 
       bgfx::setViewClear(RENDER_PASS_CUBEMAP_IR_CONV_FACE_PX + i, BGFX_CLEAR_NONE, 0, 1.0f, 0);
       bgfx::setViewName(RENDER_PASS_CUBEMAP_IR_CONV_FACE_PX + i, ir_pass_names[i]);
       bgfx::setViewMode(RENDER_PASS_CUBEMAP_IR_CONV_FACE_PX + i, bgfx::ViewMode::Sequential);
+
+      for (uint32_t j = 0; j < SIR_MIP_COUNT; ++j) {
+        char pass_name[1024];
+        sprintf(pass_name, "Sir Cubemap Conv %s, mip %d", face_names[i], j);
+        bgfx::setViewClear(RENDER_PASS_CUBEMAP_SIR_CONV_FIRST + (i * SIR_MIP_COUNT) + j, BGFX_CLEAR_NONE, 0, 1.0f, 0);
+        bgfx::setViewName(RENDER_PASS_CUBEMAP_SIR_CONV_FIRST + (i * SIR_MIP_COUNT) + j, pass_name);
+        bgfx::setViewMode(RENDER_PASS_CUBEMAP_SIR_CONV_FIRST + (i * SIR_MIP_COUNT) + j, bgfx::ViewMode::Sequential);
+        sirMipLevelSizeBytes[j] = (SIR_MAP_DIM >> j) * (SIR_MAP_DIM >> j) * sizeof(half_t) * 4;
+      }
     }
+
+    sirTotalWriteSize = 0;
+    for (uint32_t i = 0; i < SIR_MIP_COUNT; ++i) {
+      sirTotalWriteSize += 4; // for the 4 bytes of size
+      for (uint32_t j = 0; j < 6; ++j) {
+        sirMipFaceWriteOffsetLookUp[i][j] = sirTotalWriteSize;
+        sirTotalWriteSize += (sirMipLevelSizeBytes[i] + 3) & ~3; // to pad out to 4 bytes
+      }
+    }
+
+    bgfx::setViewClear(RENDER_PASS_BDRF_CONVOLVE, BGFX_CLEAR_NONE, 0, 1.0f, 0);
+    bgfx::setViewName(RENDER_PASS_BDRF_CONVOLVE, "BDRF Convolve Pass");
+    bgfx::setViewMode(RENDER_PASS_BDRF_CONVOLVE, bgfx::ViewMode::Sequential);
 
     bgfx::setViewClear(RENDER_PASS_GPU_COPY_LAST, BGFX_CLEAR_NONE, 0, 1.0f, 0);
     bgfx::setViewName(RENDER_PASS_GPU_COPY_LAST, "GPU Copies");
@@ -826,6 +929,12 @@ private:
 
     ddInit();
     imguiCreate();
+
+    // IR_MAP_DIMxIR_MAP_DIMxIR_MAP_DIM of RGBA 16bit float data
+    irCubemapFaceTextureReadCPUData = malloc(IR_MAP_DIM * IR_MAP_DIM * 6 * sizeof(half_t) * 4);
+    cubemapFaceTextureReadCPUData = malloc(m_width * m_width * 6 * sizeof(half_t) * 4);
+    sirCubemapFaceTextureReadCPUData = malloc(sirTotalWriteSize);
+    bdrfTextureReadCPUData = malloc(BDRF_DIM * BDRF_DIM * sizeof(half_t) * 2);
   }
 
   virtual int shutdown() {
@@ -1228,7 +1337,7 @@ private:
       vec3_t sunforward = {0.f, 0.f, 1.f}, sunforward2;
       bx::mtxRotateXYZ(mTmp, deg_to_rad(sunlightAngle[0]), deg_to_rad(sunlightAngle[1]), deg_to_rad(sunlightAngle[2]));
       bx::vec3MulMtx(sunforward2.v, sunforward.v, mTmp);
-
+      /*
       // Set sunlight in view space (requires inverse view transpose)
       bx::mtxInverse(mTmp, view);
       vec3_norm(&cam.up, (vec3_t*)&mTmp[4]);
@@ -1239,10 +1348,10 @@ private:
       bx::vec3MulMtx(sunforward.v, sunforward2.v, iViewX);
       // Set sunlight in view space
       vec3_norm(&sunforward2, &sunforward);
+      */
       sunlight[0] = sunforward2.x;
       sunlight[1] = sunforward2.y;
       sunlight[2] = sunforward2.z;
-      bgfx::setUniform(sunlightUniform, sunlight);
 
       bgfx::setUniform(ambientColourUniform, ambientColour);
 
@@ -1283,9 +1392,15 @@ private:
       }
       bx::mtxInverse(i_view, saved_cam_params.view);
 
-      if (ImGui::Begin("Debug Options") /*&& dbgCaptureCubemap == 0*/) {
+      if (ImGui::Begin("Debug Options") && !dbgCaptureCubemap) {
         if (ImGui::Button("Reload Shaders")) {
           loadAssetData(ShaderParams, SOLID_PROGS);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Capture Cubemaps (Slow)")) {
+          dbgCaptureCubemap = true;
+          for (uint32_t i = 0; i < 3; ++i)
+            envMapCurrentCell[i] = 0;
         }
         if (ImGui::CollapsingHeader("Render Control")) {
           ImGui::SliderFloat3("Sunlight Angle", sunlightAngle, 0.f, 360.f);
@@ -1329,13 +1444,10 @@ private:
           ImGui::Text("%f, %f, %f, %f", view[8], view[9], view[10], view[11]);
           ImGui::Text("%f, %f, %f, %f", view[12], view[13], view[14], view[15]);
         }
-        //if (ImGui::Button("Capture Cubemap")) {
-        //  dbgCaptureCubemap = 1;
-        //}
-        ImGui::Checkbox("Capture IR test cubemap", &dbgCaptureCubemap);
-        //static int32_t cubemapface = 0;
-        //ImGui::SliderInt("Current Cubemap Face", &cubemapface, 0, 5);
-        //ImGui::Image(cubemapFaceTexture[cubemapface], ImVec2(256, 256));
+        // ImGui::Checkbox("Capture IR test cubemap", &dbgCaptureCubemap);
+        // static int32_t cubemapface = 0;
+        // ImGui::SliderInt("Current Cubemap Face", &cubemapface, 0, 5);
+        // ImGui::Image(cubemapFaceTexture[cubemapface], ImVec2(256, 256));
       }
       ImGui::End();
 
@@ -1343,7 +1455,7 @@ private:
       uint32_t  zbins[Z_BUCKETS];
       uint16_t  dbg_light_list[LIGHT_COUNT + 1];
       float     zstep;
-      zbinLights(viewspaceLights, &saved_cam_params, lights, LIGHT_COUNT, zbins, &zstep);
+      if (!dbgCaptureCubemap) zbinLights(viewspaceLights, &saved_cam_params, lights, LIGHT_COUNT, zbins, &zstep);
 
       float lightingParams[4] = {
         zstep, (float)GRID_SIZE, (float)((m_width + (GRID_SIZE_M_ONE)) / GRID_SIZE), (float)(m_height)};
@@ -1352,14 +1464,11 @@ private:
       bool enableCPUUpdateLightGrid = !bgfx::isValid(ShaderParams[dbgShader].csLightCull);
       bool enableComputeLightCull = bgfx::isValid(ShaderParams[dbgShader].csLightCull);
       // use viewspaceLights which are sorted by distance from the camera
-      if (enableCPUUpdateLightGrid) {
+      if (enableCPUUpdateLightGrid && !dbgCaptureCubemap) {
         updateLightingGrid(viewspaceLights, LIGHT_COUNT, &saved_cam_params, grid, dbg_light_list);
       }
 
-      // update the bunny instances
-      uint16_t instanceStride = 64;
-
-      // Set view 0 default viewport.
+      // Setup the rendering passes.
       bgfx::setViewRect(RENDER_PASS_COMPUTE, 0, 0, m_width, m_height);
       bgfx::setViewTransform(RENDER_PASS_COMPUTE, view, proj);
 
@@ -1397,82 +1506,9 @@ private:
       bgfx::setViewRect(RENDER_PASS_2DDEBUG, 0, 0, m_width, m_height);
       bgfx::setViewTransform(RENDER_PASS_2DDEBUG, idt, orthoProj);
 
-      static vec3_t r_dir[6] = {
-        {0.f, 0.f, -1.f}, {0.f, 0.f, 1.f}, {-1.f, 0.f, 0.f}, {1.f, 0.f, 0.f}, {1.f, 0.f, 0.f}, {-1.f, 0.f, 0.f},
-      };
-      static vec3_t up_dir[6] = {
-        {0.f, 1.f, 0.f}, {0.f, 1.f, 0.f}, {0.f, 0.f, 1.f}, {0.f, 0.f, 1.f}, {0.f, 1.f, 0.f}, {0.f, 1.f, 0.f},
-      };
-      float  cm_view[6][16];
-      vec3_t cur_cam_pos = {cam.x, cam.y, cam.z};
-      for (uint32_t i = 0; i < 6; ++i) {
-        float  cm_proj[16], v_mtx_tmp[16] = {0};
-        vec3_t r = r_dir[i], up = up_dir[i], fw;
-
-        bx::mtxProj(cm_proj, 90.f, 1.f, cam.nearPlane, cam.farPlane, false);
-        vec3_cross(&fw, &r, &up);
-        v_mtx_tmp[0] = r.x;
-        v_mtx_tmp[1] = r.y;
-        v_mtx_tmp[2] = r.z;
-        v_mtx_tmp[3] = 0.f;
-        v_mtx_tmp[4] = up.x;
-        v_mtx_tmp[5] = up.y;
-        v_mtx_tmp[6] = up.z;
-        v_mtx_tmp[7] = 0.f;
-        v_mtx_tmp[8] = fw.x;
-        v_mtx_tmp[9] = fw.y;
-        v_mtx_tmp[10] = fw.z;
-        v_mtx_tmp[11] = 0.f;
-        v_mtx_tmp[12] = cur_cam_pos.x;
-        v_mtx_tmp[13] = cur_cam_pos.y;
-        v_mtx_tmp[14] = cur_cam_pos.z;
-        v_mtx_tmp[15] = 1.f;
-        bx::mtxInverse(cm_view[i], v_mtx_tmp);
-
-        bgfx::setViewRect(RENDER_PASS_CUBEMAP_FACE_PX + i, 0, 0, m_width, m_width);
-        bgfx::setViewTransform(RENDER_PASS_CUBEMAP_FACE_PX + i, cm_view[i], cm_proj);
-        bgfx::setViewFrameBuffer(RENDER_PASS_CUBEMAP_FACE_PX + i, cubemapFaceTarget[i]);
-
-        bgfx::setViewRect(RENDER_PASS_CUBEMAP_IR_CONV_FACE_PX + i, 0, 0, IR_MAP_DIM, IR_MAP_DIM);
-        bgfx::setViewTransform(RENDER_PASS_CUBEMAP_IR_CONV_FACE_PX + i, idt, orthoProj);
-        bgfx::setViewFrameBuffer(RENDER_PASS_CUBEMAP_IR_CONV_FACE_PX + i, irCubemapFaceTarget[i]);
-      }
-
-      uniformDataTmp[0] = 1.f;
-      bgfx::setUniform(dynLightsUniform, uniformDataTmp);
-
-      // Update the lighting buffers.
-      bgfx::updateDynamicVertexBuffer(lightPositionBuffer, 0, bgfx::copy(viewspaceLights, sizeof(viewspaceLights)));
-      bgfx::updateDynamicVertexBuffer(zBinBuffer, 0, bgfx::copy(zbins, sizeof(uint32_t) * Z_BUCKETS));
-      if (enableCPUUpdateLightGrid) {
-        bgfx::updateDynamicVertexBuffer(
-          lightGridBuffer, 0, bgfx::copy(grid, LIGHT_GRID_SPACE * sizeof(uint16_t) * MAX_LIGHT_GRID_COUNT));
-      }
-
-      bgfx::touch(RENDER_PASS_COMPUTE);
-
-      // Do the compute shader version.
-      if (enableComputeLightCull) {
-        float viewParams[8] = {saved_cam_params.nearPlane,
-                               saved_cam_params.farPlane,
-                               saved_cam_params.fovy,
-                               saved_cam_params.aspect,
-                               (float)LIGHT_COUNT,
-                               (float)m_width,
-                               (float)m_height,
-                               0};
-        bgfx::setUniform(csViewPrams, viewParams, 2);
-        bgfx::setBuffer(0, lightPositionBuffer, bgfx::Access::Read); // input
-        bgfx::setBuffer(1, lightGridFatBuffer, bgfx::Access::Write); // ouput
-        bgfx::dispatch(RENDER_PASS_COMPUTE,
-                       ShaderParams[dbgShader].csLightCull,
-                       ((m_width + (GRID_SIZE_M_ONE)) / GRID_SIZE),
-                       ((m_height + (GRID_SIZE_M_ONE)) / GRID_SIZE),
-                       1);
-      }
-
-
-      uint64_t state = 0;
+      bgfx::setViewRect(RENDER_PASS_BDRF_CONVOLVE, 0, 0, BDRF_DIM, BDRF_DIM);
+      bgfx::setViewTransform(RENDER_PASS_BDRF_CONVOLVE, idt, orthoProj);
+      bgfx::setViewFrameBuffer(RENDER_PASS_BDRF_CONVOLVE, bdrfConvolveTarget);
 
       bgfx::UniformHandle handles[MATERIAL_MAX];
       handles[MATERIAL_BASE] = baseTex;
@@ -1489,160 +1525,76 @@ private:
         enableCPUUpdateLightGrid ? lightGridBuffer : lightGridFatBuffer,
       };
 
-      if (bgfx::isValid(ShaderParams[dbgShader].zfillProg)) {
-        // Set instance data buffer.
-        mesh_submit(&m_mesh,
-                    RENDER_PASS_ZPREPASS,
-                    ShaderParams[dbgShader].zfillProg,
-                    mTmp,
-                    BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA,
-                    handles,
-                    buffer);
-        for (uint32_t o = 0; o < TOTAL_ORBS; ++o) {
-          float model[16];
-          bx::mtxTranslate(model, Orbs[o].position.x, Orbs[o].position.y, Orbs[o].position.z);
-          bgfx::setUniform(albedoUnform, Orbs[o].colour);
-          float mr[4] = {Orbs[o].metal ? 1.f : 0.f, Orbs[o].roughnes};
-          bgfx::setUniform(metalRoughUniform, mr);
-          bgfx::setBuffer(10, buffer[0], bgfx::Access::Read);
-          bgfx::setBuffer(11, buffer[1], bgfx::Access::Read);
-          bgfx::setBuffer(12, buffer[2], bgfx::Access::Read);
-          bgfx::setBuffer(13, buffer[3], bgfx::Access::Read);
-          bgfx::setBuffer(14, buffer[4], bgfx::Access::Read);
-          mesh_submit(&m_orb,
+      if (!dbgCaptureCubemap) {
+        uniformDataTmp[0] = 1.f;
+        bgfx::setUniform(dynLightsUniform, uniformDataTmp);
+        bgfx::setUniform(sunlightUniform, sunlight);
+
+        // Update the lighting buffers.
+        bgfx::updateDynamicVertexBuffer(lightPositionBuffer, 0, bgfx::copy(viewspaceLights, sizeof(viewspaceLights)));
+        bgfx::updateDynamicVertexBuffer(zBinBuffer, 0, bgfx::copy(zbins, sizeof(uint32_t) * Z_BUCKETS));
+        if (enableCPUUpdateLightGrid) {
+          bgfx::updateDynamicVertexBuffer(
+            lightGridBuffer, 0, bgfx::copy(grid, LIGHT_GRID_SPACE * sizeof(uint16_t) * MAX_LIGHT_GRID_COUNT));
+        }
+
+        bgfx::touch(RENDER_PASS_COMPUTE);
+
+        // Do the compute shader version.
+        if (enableComputeLightCull) {
+          float viewParams[8] = {saved_cam_params.nearPlane,
+                                 saved_cam_params.farPlane,
+                                 saved_cam_params.fovy,
+                                 saved_cam_params.aspect,
+                                 (float)LIGHT_COUNT,
+                                 (float)m_width,
+                                 (float)m_height,
+                                 0};
+          bgfx::setUniform(csViewPrams, viewParams, 2);
+          bgfx::setBuffer(0, lightPositionBuffer, bgfx::Access::Read); // input
+          bgfx::setBuffer(1, lightGridFatBuffer, bgfx::Access::Write); // ouput
+          bgfx::dispatch(RENDER_PASS_COMPUTE,
+                         ShaderParams[dbgShader].csLightCull,
+                         ((m_width + (GRID_SIZE_M_ONE)) / GRID_SIZE),
+                         ((m_height + (GRID_SIZE_M_ONE)) / GRID_SIZE),
+                         1);
+        }
+
+
+        uint64_t state = 0;
+
+        if (bgfx::isValid(ShaderParams[dbgShader].zfillProg)) {
+          // Set instance data buffer.
+          mesh_submit(&m_mesh,
                       RENDER_PASS_ZPREPASS,
                       ShaderParams[dbgShader].zfillProg,
-                      model,
-                      BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
+                      mTmp,
+                      BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA,
+                      handles,
+                      buffer);
+          for (uint32_t o = 0; o < TOTAL_ORBS; ++o) {
+            float model[16];
+            bx::mtxTranslate(model, Orbs[o].position.x, Orbs[o].position.y, Orbs[o].position.z);
+            bgfx::setUniform(albedoUnform, Orbs[o].colour);
+            float mr[4] = {Orbs[o].metal ? 1.f : 0.f, Orbs[o].roughnes};
+            bgfx::setUniform(metalRoughUniform, mr);
+            bgfx::setBuffer(10, buffer[0], bgfx::Access::Read);
+            bgfx::setBuffer(11, buffer[1], bgfx::Access::Read);
+            bgfx::setBuffer(12, buffer[2], bgfx::Access::Read);
+            bgfx::setBuffer(13, buffer[3], bgfx::Access::Read);
+            bgfx::setBuffer(14, buffer[4], bgfx::Access::Read);
+            mesh_submit(&m_orb,
+                        RENDER_PASS_ZPREPASS,
+                        ShaderParams[dbgShader].zfillProg,
+                        model,
+                        BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
+          }
         }
-      }
-      // Set instance data buffer.
-      mesh_submit(&m_mesh,
-                  RENDER_PASS_SOLID,
-                  ShaderParams[dbgShader].solidProg,
-                  ShaderParams[dbgShader].solidProgMask,
-                  mTmp,
-                  BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_TEST_LEQUAL |
-                    BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA,
-                  handles,
-                  buffer);
-      for (uint32_t o = 0; o < TOTAL_ORBS; ++o) {
-        float model[16];
-        bx::mtxScale(model, 2.5f);
-        model[12] = Orbs[o].position.x;
-        model[13] = Orbs[o].position.y;
-        model[14] = Orbs[o].position.z;
-        bgfx::setUniform(albedoUnform, Orbs[o].colour);
-        float mr[4] = {Orbs[o].metal ? 1.f : 0.f, Orbs[o].roughnes};
-        bgfx::setUniform(metalRoughUniform, mr);
-        bgfx::setBuffer(10, buffer[0], bgfx::Access::Read);
-        bgfx::setBuffer(11, buffer[1], bgfx::Access::Read);
-        bgfx::setBuffer(12, buffer[2], bgfx::Access::Read);
-        bgfx::setBuffer(13, buffer[3], bgfx::Access::Read);
-        bgfx::setBuffer(14, buffer[4], bgfx::Access::Read);
-        mesh_submit(&m_orb,
-                    RENDER_PASS_SOLID,
-                    ShaderParams[dbgShader].solidProgNoTex,
-                    model,
-                    BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_TEST_LEQUAL |
-                      BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
-      }
-
-      bool enableFullscreenQuad = bgfx::isValid(ShaderParams[dbgShader].fullscreenProg);
-      if (enableFullscreenQuad) {
-        bgfx::setBuffer(10, zBinBuffer, bgfx::Access::Read);
-        bgfx::setBuffer(11, lightGridBuffer, bgfx::Access::Read);
-        bgfx::setBuffer(12, lightListBuffer, bgfx::Access::Read);
-        bgfx::setBuffer(13, lightPositionBuffer, bgfx::Access::Read);
-        bgfx::setBuffer(14, enableCPUUpdateLightGrid ? lightGridBuffer : lightGridFatBuffer, bgfx::Access::Read);
-
-        bgfx::setState(0 | BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_BLEND_ADD |
-                       BGFX_STATE_BLEND_EQUATION(BGFX_STATE_BLEND_EQUATION_ADD) | BGFX_STATE_MSAA);
-        screenSpaceQuad((float)m_width, (float)m_height, s_texelHalf, m_caps->originBottomLeft);
-        bgfx::submit(RENDER_PASS_2DDEBUG, ShaderParams[dbgShader].fullscreenProg);
-      }
-
-      // Average Luminance
-      if (dbgPixelAvgLuminance) {
-        uint32_t luminance_w = m_width / 2, luminance_h = m_height / 2;
-        uint32_t luminance_mip = 0;
-        for (uint32_t luminance_mip = 0; luminance_mip < numLuminanceMips; ++luminance_mip) {
-          bgfx::setState(BGFX_STATE_RGB_WRITE | BGFX_STATE_MSAA);
-          float uv_offsets[12] = {0.5f / ((float)luminance_w),
-                                  0.f,
-                                  -.5f / ((float)luminance_w),
-                                  0.f,
-                                  0.f,
-                                  0.5f / ((float)luminance_h),
-                                  0.f,
-                                  -.5f / ((float)luminance_h),
-                                  luminance_mip == 0 ? 1.f : 0.f,
-                                  0.f,
-                                  0.f,
-                                  0.f};
-          bgfx::setUniform(offsetUniform, uv_offsets, 3);
-          screenSpaceQuad((float)luminance_w, (float)luminance_h, s_texelHalf, m_caps->originBottomLeft);
-          bgfx::setTexture(1, luminanceTex, luminance_mip ? luminanceMips[luminance_mip - 1] : colourTarget);
-          bgfx::submit(RENDER_PASS_LUMINANCE_START + luminance_mip, luminancePixelProg);
-
-          if (luminance_w > 1) luminance_w /= 2;
-          if (luminance_h > 1) luminance_h /= 2;
-        }
-      }
-
-      bgfx::setTexture(0, baseTex, colourTarget);
-      bgfx::setTexture(1, luminanceTex, luminanceMips[numLuminanceMips - 1]);
-      bgfx::setBuffer(1, workingLuminanceBuffer, bgfx::Access::ReadWrite); // input
-      bgfx::setBuffer(2, averageLuminanceBuffer, bgfx::Access::ReadWrite); // ouput
-      float viewParams[8] = {0.f,
-                             0.f,
-                             0.f,
-                             (float)m_width * m_height,
-                             (float)(m_width + SMALL_DISPATCH_WAVE - 1) / SMALL_DISPATCH_WAVE,
-                             (float)(m_height + SMALL_DISPATCH_WAVE - 1) / SMALL_DISPATCH_WAVE,
-                             (float)0,
-                             (float)(((m_width + SMALL_DISPATCH_WAVE - 1) / SMALL_DISPATCH_WAVE) *
-                                     ((m_height + SMALL_DISPATCH_WAVE - 1) / SMALL_DISPATCH_WAVE))};
-      bgfx::setUniform(csViewPrams, viewParams, 2);
-      bgfx::dispatch(RENDER_PASS_TONEMAP,
-                     logLuminanceAvProg,
-                     ((m_width + (SMALL_DISPATCH_WAVE - 1)) / SMALL_DISPATCH_WAVE),
-                     ((m_height + (SMALL_DISPATCH_WAVE - 1)) / SMALL_DISPATCH_WAVE),
-                     1);
-
-      // Tonemap pass
-      bgfx::setTexture(0, baseTex, colourTarget);
-      bgfx::setTexture(1, luminanceTex, luminanceMips[numLuminanceMips - 1]);
-      bgfx::setTexture(5, colourLUTTex, colourGradeLUT);
-      float exposure_params[4] = {curExposureMin, curExposureMax, curExposure, 0.f};
-      bgfx::setUniform(exposureParamsUniform, exposure_params);
-      bgfx::setState(BGFX_STATE_RGB_WRITE | BGFX_STATE_MSAA);
-      screenSpaceQuad((float)m_width, (float)m_height, s_texelHalf, m_caps->originBottomLeft);
-      bgfx::submit(RENDER_PASS_TONEMAP, tonemapProg);
-
-
-      bgfx::setTexture(0, baseTex, finalColourTarget);
-      bgfx::setState(BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_MSAA);
-      screenSpaceQuad((float)m_width, (float)m_height, s_texelHalf, m_caps->originBottomLeft);
-      bgfx::submit(RENDER_POST_DEBUG_BLIT, copyProg);
-
-      // submit any cubemap stuff
-      // disable lights
-      uniformDataTmp[0] = 0.f;
-      bgfx::setUniform(dynLightsUniform, uniformDataTmp);
-
-      for (uint32_t i = 0; i < 6; ++i) {
-        bx::vec3MulMtx(sunforward.v, sunforward2.v, cm_view[i]);
-        // Set sunlight in view space
-        vec3_norm(&sunforward2, &sunforward);
-        sunlight[0] = sunforward2.x;
-        sunlight[1] = sunforward2.y;
-        sunlight[2] = sunforward2.z;
-        bgfx::setUniform(sunlightUniform, sunlight);
+        // Set instance data buffer.
         mesh_submit(&m_mesh,
-                    RENDER_PASS_CUBEMAP_FACE_PX + i,
+                    RENDER_PASS_SOLID,
                     ShaderParams[dbgShader].solidProg,
-                    ShaderParams[dbgShader].solidProgMask,
+                    BGFX_INVALID_HANDLE /*ShaderParams[dbgShader].solidProgMask*/,
                     mTmp,
                     BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_TEST_LEQUAL |
                       BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA,
@@ -1663,16 +1615,323 @@ private:
           bgfx::setBuffer(13, buffer[3], bgfx::Access::Read);
           bgfx::setBuffer(14, buffer[4], bgfx::Access::Read);
           mesh_submit(&m_orb,
-                      RENDER_PASS_CUBEMAP_FACE_PX + i,
+                      RENDER_PASS_SOLID,
                       ShaderParams[dbgShader].solidProgNoTex,
                       model,
                       BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_TEST_LEQUAL |
                         BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
         }
-      }
 
-      if (dbgCaptureCubemap) {
+        bool enableFullscreenQuad = bgfx::isValid(ShaderParams[dbgShader].fullscreenProg);
+        if (enableFullscreenQuad) {
+          bgfx::setBuffer(10, zBinBuffer, bgfx::Access::Read);
+          bgfx::setBuffer(11, lightGridBuffer, bgfx::Access::Read);
+          bgfx::setBuffer(12, lightListBuffer, bgfx::Access::Read);
+          bgfx::setBuffer(13, lightPositionBuffer, bgfx::Access::Read);
+          bgfx::setBuffer(14, enableCPUUpdateLightGrid ? lightGridBuffer : lightGridFatBuffer, bgfx::Access::Read);
+
+          bgfx::setState(0 | BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_BLEND_ADD |
+                         BGFX_STATE_BLEND_EQUATION(BGFX_STATE_BLEND_EQUATION_ADD) | BGFX_STATE_MSAA);
+          screenSpaceQuad((float)m_width, (float)m_height, s_texelHalf, m_caps->originBottomLeft);
+          bgfx::submit(RENDER_PASS_2DDEBUG, ShaderParams[dbgShader].fullscreenProg);
+        }
+
+        // Average Luminance
+        if (dbgPixelAvgLuminance) {
+          uint32_t luminance_w = m_width / 2, luminance_h = m_height / 2;
+          uint32_t luminance_mip = 0;
+          for (uint32_t luminance_mip = 0; luminance_mip < numLuminanceMips; ++luminance_mip) {
+            bgfx::setState(BGFX_STATE_RGB_WRITE | BGFX_STATE_MSAA);
+            float uv_offsets[12] = {0.5f / ((float)luminance_w),
+                                    0.f,
+                                    -.5f / ((float)luminance_w),
+                                    0.f,
+                                    0.f,
+                                    0.5f / ((float)luminance_h),
+                                    0.f,
+                                    -.5f / ((float)luminance_h),
+                                    luminance_mip == 0 ? 1.f : 0.f,
+                                    0.f,
+                                    0.f,
+                                    0.f};
+            bgfx::setUniform(offsetUniform, uv_offsets, 3);
+            screenSpaceQuad((float)luminance_w, (float)luminance_h, s_texelHalf, m_caps->originBottomLeft);
+            bgfx::setTexture(1, luminanceTex, luminance_mip ? luminanceMips[luminance_mip - 1] : colourTarget);
+            bgfx::submit(RENDER_PASS_LUMINANCE_START + luminance_mip, luminancePixelProg);
+
+            if (luminance_w > 1) luminance_w /= 2;
+            if (luminance_h > 1) luminance_h /= 2;
+          }
+        }
+
+        bgfx::setTexture(0, baseTex, colourTarget);
+        bgfx::setTexture(1, luminanceTex, luminanceMips[numLuminanceMips - 1]);
+        bgfx::setBuffer(1, workingLuminanceBuffer, bgfx::Access::ReadWrite); // input
+        bgfx::setBuffer(2, averageLuminanceBuffer, bgfx::Access::ReadWrite); // ouput
+        float viewParams[8] = {0.f,
+                               0.f,
+                               0.f,
+                               (float)m_width * m_height,
+                               (float)(m_width + SMALL_DISPATCH_WAVE - 1) / SMALL_DISPATCH_WAVE,
+                               (float)(m_height + SMALL_DISPATCH_WAVE - 1) / SMALL_DISPATCH_WAVE,
+                               (float)0,
+                               (float)(((m_width + SMALL_DISPATCH_WAVE - 1) / SMALL_DISPATCH_WAVE) *
+                                       ((m_height + SMALL_DISPATCH_WAVE - 1) / SMALL_DISPATCH_WAVE))};
+        bgfx::setUniform(csViewPrams, viewParams, 2);
+        bgfx::dispatch(RENDER_PASS_TONEMAP,
+                       logLuminanceAvProg,
+                       ((m_width + (SMALL_DISPATCH_WAVE - 1)) / SMALL_DISPATCH_WAVE),
+                       ((m_height + (SMALL_DISPATCH_WAVE - 1)) / SMALL_DISPATCH_WAVE),
+                       1);
+
+        // Tonemap pass
+        bgfx::setTexture(0, baseTex, colourTarget);
+        bgfx::setTexture(1, luminanceTex, luminanceMips[numLuminanceMips - 1]);
+        bgfx::setTexture(5, colourLUTTex, colourGradeLUT);
+        float exposure_params[4] = {curExposureMin, curExposureMax, curExposure, 0.f};
+        bgfx::setUniform(exposureParamsUniform, exposure_params);
+        bgfx::setState(BGFX_STATE_RGB_WRITE | BGFX_STATE_MSAA);
+        screenSpaceQuad((float)m_width, (float)m_height, s_texelHalf, m_caps->originBottomLeft);
+        bgfx::submit(RENDER_PASS_TONEMAP, tonemapProg);
+
+
+        bgfx::setTexture(0, baseTex, finalColourTarget);
+        bgfx::setState(BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_MSAA);
+        screenSpaceQuad((float)m_width, (float)m_height, s_texelHalf, m_caps->originBottomLeft);
+        bgfx::submit(RENDER_POST_DEBUG_BLIT, copyProg);
+      } else if (dbgWaitingOnReadback) {
+        if (frameReturn >= dbgCaptureReadyFrame) {
+          char dstFile[1024];
+
+          sprintf(
+            dstFile, "data/env/%dx%dx%d_ir.ktx", envMapCurrentCell[0], envMapCurrentCell[1], envMapCurrentCell[2]);
+          char        ktx_id[12] = KTX_FILE_IDENT;
+          ktxheader_t h;
+          memcpy(h.identifier, ktx_id, sizeof h.identifier);
+          h.endianness = KTX_ENDIANNESS_CHECK;
+          h.glType = KTX_HALF_FLOAT;
+          h.glTypeSize = 2;
+          h.glFormat = KTX_RGBA;
+          h.glInternalFormat = KTX_RGBA16F;
+          h.glBaseInternalFormat = KTX_RGBA;
+          h.pixelWidth = IR_MAP_DIM;
+          h.pixelHeight = IR_MAP_DIM;
+          h.pixelDepth = 0;
+          h.numberOfArrayElements = 0;
+          h.numberOfFaces = 6;
+          h.numberOfMipmapLevels = 1;
+          h.bytesOfKeyValueData = 0;
+
+          FILE* f = fopen(dstFile, "wb");
+          if (f) {
+            uint32_t facesize = IR_MAP_DIM * IR_MAP_DIM * sizeof(half_t) * 4;
+            fwrite(&h, sizeof ktxheader_t, 1, f);
+            fwrite(&facesize, sizeof uint32_t, 1, f);
+            fwrite(irCubemapFaceTextureReadCPUData, IR_MAP_DIM * IR_MAP_DIM * 6 * sizeof(half_t) * 4, 1, f);
+            fclose(f);
+          }
+
+          sprintf(
+            dstFile, "data/env/%dx%dx%d_cm.ktx", envMapCurrentCell[0], envMapCurrentCell[1], envMapCurrentCell[2]);
+          memset(&h, 0, sizeof h);
+          memcpy(h.identifier, ktx_id, sizeof h.identifier);
+          h.endianness = KTX_ENDIANNESS_CHECK;
+          h.glType = KTX_HALF_FLOAT;
+          h.glTypeSize = 2;
+          h.glFormat = KTX_RGBA;
+          h.glInternalFormat = KTX_RGBA16F;
+          h.glBaseInternalFormat = KTX_RGBA;
+          h.pixelWidth = m_width;
+          h.pixelHeight = m_width;
+          h.pixelDepth = 0;
+          h.numberOfArrayElements = 0;
+          h.numberOfFaces = 6;
+          h.numberOfMipmapLevels = 1;
+          h.bytesOfKeyValueData = 0;
+          f = fopen(dstFile, "wb");
+          if (f) {
+            uint32_t facesize = m_width * m_width * sizeof(half_t) * 4;
+            fwrite(&h, sizeof ktxheader_t, 1, f);
+            fwrite(&facesize, sizeof uint32_t, 1, f);
+            fwrite(cubemapFaceTextureReadCPUData, m_width * m_width * 6 * sizeof(half_t) * 4, 1, f);
+            fclose(f);
+          }
+
+          sprintf(
+            dstFile, "data/env/%dx%dx%d_sir.ktx", envMapCurrentCell[0], envMapCurrentCell[1], envMapCurrentCell[2]);
+          memset(&h, 0, sizeof h);
+          memcpy(h.identifier, ktx_id, sizeof h.identifier);
+          h.endianness = KTX_ENDIANNESS_CHECK;
+          h.glType = KTX_HALF_FLOAT;
+          h.glTypeSize = 2;
+          h.glFormat = KTX_RGBA;
+          h.glInternalFormat = KTX_RGBA16F;
+          h.glBaseInternalFormat = KTX_RGBA;
+          h.pixelWidth = SIR_MAP_DIM;
+          h.pixelHeight = SIR_MAP_DIM;
+          h.pixelDepth = 0;
+          h.numberOfArrayElements = 0;
+          h.numberOfFaces = 6;
+          h.numberOfMipmapLevels = SIR_MIP_COUNT;
+          h.bytesOfKeyValueData = 0;
+          f = fopen(dstFile, "wb");
+          if (f) {
+            uint32_t facesize = m_width * m_width * sizeof(half_t) * 4;
+            fwrite(&h, sizeof ktxheader_t, 1, f);
+            // Update the mip sizes
+            for (uint32_t i = 0; i < SIR_MIP_COUNT; ++i) {
+              uint32_t size_write_offset = sirMipFaceWriteOffsetLookUp[i][0] - 4;
+              // *6 for each cubemap face
+              *(uint32_t*)((uint8_t*)sirCubemapFaceTextureReadCPUData + size_write_offset) = sirMipLevelSizeBytes[i];
+            }
+            fwrite(sirCubemapFaceTextureReadCPUData, sirTotalWriteSize, 1, f);
+            fclose(f);
+          }
+
+          if (envMapCurrentCell[0] == 0 && envMapCurrentCell[1] == 0 && envMapCurrentCell[2] == 0) {
+            sprintf(dstFile, "data/env/bdrf.ktx");
+            memset(&h, 0, sizeof h);
+            memcpy(h.identifier, ktx_id, sizeof h.identifier);
+            h.endianness = KTX_ENDIANNESS_CHECK;
+            h.glType = KTX_HALF_FLOAT;
+            h.glTypeSize = 2;
+            h.glFormat = KTX_RG;
+            h.glInternalFormat = KTX_RG16F;
+            h.glBaseInternalFormat = KTX_RG;
+            h.pixelWidth = BDRF_DIM;
+            h.pixelHeight = BDRF_DIM;
+            h.pixelDepth = 0;
+            h.numberOfArrayElements = 0;
+            h.numberOfFaces = 0;
+            h.numberOfMipmapLevels = 1;
+            h.bytesOfKeyValueData = 0;
+            f = fopen(dstFile, "wb");
+            if (f) {
+              uint32_t facesize = BDRF_DIM * BDRF_DIM * sizeof(half_t) * 2;
+              fwrite(&h, sizeof ktxheader_t, 1, f);
+              fwrite(&facesize, sizeof uint32_t, 1, f);
+              fwrite(bdrfTextureReadCPUData, facesize, 1, f);
+              fclose(f);
+            }
+          }
+
+          ++envMapCurrentCell[0];
+          if (envMapCurrentCell[0] >= envMapGridDim[0]) {
+            envMapCurrentCell[0] = 0;
+            ++envMapCurrentCell[1];
+          }
+          if (envMapCurrentCell[1] >= envMapGridDim[1]) {
+            envMapCurrentCell[1] = 0;
+            ++envMapCurrentCell[2];
+          }
+          if (envMapCurrentCell[2] >= envMapGridDim[2]) {
+            dbgCaptureCubemap = false;
+          }
+          dbgWaitingOnReadback = false;
+        }
+      } else {
+        if (envMapCurrentCell[0] == 0 && envMapCurrentCell[1] == 0 && envMapCurrentCell[2] == 0) {
+          bgfx::setState(BGFX_STATE_RGB_WRITE | BGFX_STATE_MSAA);
+          screenSpaceQuad(BDRF_DIM, BDRF_DIM, s_texelHalf, m_caps->originBottomLeft);
+          bgfx::submit(RENDER_PASS_BDRF_CONVOLVE, bdrfConvolveProg);
+        }
+
+        static vec3_t r_dir[6] = {
+          {0.f, 0.f, -1.f}, {0.f, 0.f, 1.f}, {1.f, 0.f, 0.f}, {1.f, 0.f, 0.f}, {1.f, 0.f, 0.f}, {-1.f, 0.f, 0.f},
+        };
+        static vec3_t up_dir[6] = {
+          {0.f, 1.f, 0.f}, {0.f, 1.f, 0.f}, {0.f, 0.f, -1.f}, {0.f, 0.f, 1.f}, {0.f, 1.f, 0.f}, {0.f, 1.f, 0.f},
+        };
+        float  cm_view[6][16];
+        vec3_t cur_cam_pos;
+
+        cur_cam_pos.x = totalBoundsMin[0] + (envMapCurrentCell[0] * ENV_MAP_GRID_DIM) + ENV_MAP_GRID_DIM * .5f;
+        cur_cam_pos.y = totalBoundsMin[1] + (envMapCurrentCell[1] * ENV_MAP_GRID_DIM) + ENV_MAP_GRID_DIM * .5f;
+        cur_cam_pos.z = totalBoundsMin[2] + (envMapCurrentCell[2] * ENV_MAP_GRID_DIM) + ENV_MAP_GRID_DIM * .5f;
+
+        for (uint32_t i = 0; i < 6; ++i) {
+          float  cm_proj[16], v_mtx_tmp[16] = {0};
+          vec3_t r = r_dir[i], up = up_dir[i], fw;
+
+          // TODO: ensure this projects is correct for the grid cell. Currently won't match the faces of the cell? This
+          // results in seems in the cubemaps I suspect.
+          bx::mtxProj(cm_proj, 90.f, 1.f, cam.nearPlane, cam.farPlane, false);
+          vec3_cross(&fw, &r, &up);
+          v_mtx_tmp[0] = r.x;
+          v_mtx_tmp[1] = r.y;
+          v_mtx_tmp[2] = r.z;
+          v_mtx_tmp[3] = 0.f;
+          v_mtx_tmp[4] = up.x;
+          v_mtx_tmp[5] = up.y;
+          v_mtx_tmp[6] = up.z;
+          v_mtx_tmp[7] = 0.f;
+          v_mtx_tmp[8] = fw.x;
+          v_mtx_tmp[9] = fw.y;
+          v_mtx_tmp[10] = fw.z;
+          v_mtx_tmp[11] = 0.f;
+          v_mtx_tmp[12] = cur_cam_pos.x;
+          v_mtx_tmp[13] = cur_cam_pos.y;
+          v_mtx_tmp[14] = cur_cam_pos.z;
+          v_mtx_tmp[15] = 1.f;
+          bx::mtxInverse(cm_view[i], v_mtx_tmp);
+
+          bgfx::setViewRect(RENDER_PASS_CUBEMAP_FACE_PX + i, 0, 0, m_width, m_width);
+          bgfx::setViewTransform(RENDER_PASS_CUBEMAP_FACE_PX + i, cm_view[i], cm_proj);
+          bgfx::setViewFrameBuffer(RENDER_PASS_CUBEMAP_FACE_PX + i, cubemapFaceTarget[i]);
+
+          bgfx::setViewRect(RENDER_PASS_CUBEMAP_IR_CONV_FACE_PX + i, 0, 0, IR_MAP_DIM, IR_MAP_DIM);
+          bgfx::setViewTransform(RENDER_PASS_CUBEMAP_IR_CONV_FACE_PX + i, idt, orthoProj);
+          bgfx::setViewFrameBuffer(RENDER_PASS_CUBEMAP_IR_CONV_FACE_PX + i, irCubemapFaceTarget[i]);
+
+          for (uint32_t j = 0; j < SIR_MIP_COUNT; ++j) {
+            uint32_t mip_dims = SIR_MAP_DIM >> j;
+            bgfx::setViewRect(RENDER_PASS_CUBEMAP_SIR_CONV_FIRST + (i * SIR_MIP_COUNT) + j, 0, 0, mip_dims, mip_dims);
+            bgfx::setViewTransform(RENDER_PASS_CUBEMAP_SIR_CONV_FIRST + (i * SIR_MIP_COUNT) + j, idt, orthoProj);
+            bgfx::setViewFrameBuffer(RENDER_PASS_CUBEMAP_SIR_CONV_FIRST + (i * SIR_MIP_COUNT) + j,
+                                     sirCubemapFaceTarget[i][j]);
+          }
+        }
+
+        // submit any cubemap stuff
+        // disable lights
+        uniformDataTmp[0] = 0.f;
+        bgfx::setUniform(dynLightsUniform, uniformDataTmp);
+
+        for (uint32_t i = 0; i < 6; ++i) {
+          mesh_submit(&m_mesh,
+                      RENDER_PASS_CUBEMAP_FACE_PX + i,
+                      ShaderParams[dbgShader].solidProg,
+                      ShaderParams[dbgShader].solidProgMask,
+                      mTmp,
+                      BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_TEST_LEQUAL |
+                        BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA,
+                      handles,
+                      buffer);
+          for (uint32_t o = 0; o < TOTAL_ORBS; ++o) {
+            float model[16];
+            bx::mtxScale(model, 2.5f);
+            model[12] = Orbs[o].position.x;
+            model[13] = Orbs[o].position.y;
+            model[14] = Orbs[o].position.z;
+            bgfx::setUniform(albedoUnform, Orbs[o].colour);
+            float mr[4] = {Orbs[o].metal ? 1.f : 0.f, Orbs[o].roughnes};
+            bgfx::setUniform(metalRoughUniform, mr);
+            bgfx::setBuffer(10, buffer[0], bgfx::Access::Read);
+            bgfx::setBuffer(11, buffer[1], bgfx::Access::Read);
+            bgfx::setBuffer(12, buffer[2], bgfx::Access::Read);
+            bgfx::setBuffer(13, buffer[3], bgfx::Access::Read);
+            bgfx::setBuffer(14, buffer[4], bgfx::Access::Read);
+            mesh_submit(&m_orb,
+                        RENDER_PASS_CUBEMAP_FACE_PX + i,
+                        ShaderParams[dbgShader].solidProgNoTex,
+                        model,
+                        BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_TEST_LEQUAL |
+                          BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
+          }
+        }
+
         float faceUniform[4];
+        // irradiance
         for (uint32_t i = 0; i < 6; ++i) {
           faceUniform[0] = (float)i;
           bgfx::setState(BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_MSAA);
@@ -1682,12 +1941,53 @@ private:
           bgfx::submit(RENDER_PASS_CUBEMAP_IR_CONV_FACE_PX + i, irConvolveProg);
         }
 
-        // copy to non-vram
-        for (uint32_t i=0; i < 6; ++i) {
-          bgfx::blit(RENDER_PASS_GPU_COPY_LAST, 
-            irCubemapFaceTextureRead, 0, 0, 0, i,
-            irCubemapFaceTexture, 0, 0, 0, i);
+        // specular irradiance
+        for (uint32_t i = 0; i < 6; ++i) {
+          faceUniform[0] = (float)i;
+          for (uint32_t j = 0; j < SIR_MIP_COUNT; ++j) {
+            faceUniform[1] = j / (float)SIR_MIP_COUNT; // set this mip's roughness
+            bgfx::setState(BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_MSAA);
+            bgfx::setUniform(cubeFaceUniform, faceUniform);
+            bgfx::setTexture(6, environmentMapTex, cubemapFaceTexture);
+            screenSpaceQuad(SIR_MAP_DIM, SIR_MAP_DIM, s_texelHalf, m_caps->originBottomLeft);
+            bgfx::submit(RENDER_PASS_CUBEMAP_SIR_CONV_FIRST + (i * SIR_MIP_COUNT) + j, sirConvolveProg);
+          }
         }
+
+        // copy to non-vram
+        bgfx::blit(RENDER_PASS_GPU_COPY_LAST, bdrfConvolveTextureRead, 0, 0, 0, 0, bdrfConvolveTexture, 0, 0, 0, 0);
+        dbgCaptureReadyFrame = bgfx::readTexture(bdrfConvolveTextureRead, (uint8_t*)bdrfTextureReadCPUData, 0);
+        for (uint32_t i = 0; i < 6; ++i) {
+          bgfx::blit(RENDER_PASS_GPU_COPY_LAST, cubemapFaceTextureRead[i], 0, 0, 0, 0, cubemapFaceTexture, 0, 0, 0, i);
+          bgfx::blit(
+            RENDER_PASS_GPU_COPY_LAST, irCubemapFaceTextureRead[i], 0, 0, 0, 0, irCubemapFaceTexture, 0, 0, 0, i);
+          // no mip chian to worry about
+          dbgCaptureReadyFrame =
+            bgfx::readTexture(irCubemapFaceTextureRead[i],
+                              (half_t*)irCubemapFaceTextureReadCPUData + i * (IR_MAP_DIM * IR_MAP_DIM * 4),
+                              0);
+          dbgCaptureReadyFrame = bgfx::readTexture(
+            cubemapFaceTextureRead[i], (half_t*)cubemapFaceTextureReadCPUData + i * (m_width * m_width * 4), 0);
+          for (uint32_t j = 0; j < SIR_MIP_COUNT; ++j) {
+            bgfx::blit(RENDER_PASS_GPU_COPY_LAST,
+                       sirCubemapFaceTextureRead[i][j],
+                       0,
+                       0,
+                       0,
+                       0,
+                       sirCubemapFaceTexture[j],
+                       0,
+                       0,
+                       0,
+                       i);
+            dbgCaptureReadyFrame =
+              bgfx::readTexture(sirCubemapFaceTextureRead[i][j],
+                                (uint8_t*)sirCubemapFaceTextureReadCPUData + sirMipFaceWriteOffsetLookUp[j][i],
+                                0);
+          }
+        }
+
+        dbgWaitingOnReadback = true;
       }
 
       // Use debug font to print information about this example.
@@ -1698,8 +1998,29 @@ private:
       }
 
       uint32_t c = 0;
-      bgfx::dbgTextPrintf(0, 0, 0x6f, "Current Mode: %s", ShaderParams[dbgShader].description);
-      bgfx::dbgTextPrintf(0, 1, 0x6f, "Total Lights: %d", LIGHT_COUNT);
+      if (dbgCaptureCubemap) {
+        uint32_t current = (envMapCurrentCell[2] * envMapGridDim[1] * envMapGridDim[0]) +
+                           (envMapCurrentCell[1] * envMapGridDim[0]) + envMapCurrentCell[0];
+        uint32_t total = envMapGridDim[2] * envMapGridDim[1] * envMapGridDim[0];
+        bgfx::dbgTextPrintf(0,
+                            0,
+                            0x6f,
+                            "Capturing Cubemap (%d, %d, %d)",
+                            envMapCurrentCell[0],
+                            envMapCurrentCell[1],
+                            envMapCurrentCell[2]);
+        bgfx::dbgTextPrintf(0, 1, 0x6f, "%d of %d", current, total);
+      } else {
+        bgfx::dbgTextPrintf(0, 0, 0x6f, "Current Mode: %s", ShaderParams[dbgShader].description);
+        bgfx::dbgTextPrintf(0,
+                            1,
+                            0x6f,
+                            "Total Lights: %d. Cells (%d,%d,%d)",
+                            LIGHT_COUNT,
+                            envMapGridDim[0],
+                            envMapGridDim[1],
+                            envMapGridDim[2]);
+      }
       if (!enableComputeLightCull) {
         bgfx::dbgTextPrintf(0, 2, 0x6f, "Current Cell %d. Debug Lights:", dbgCell);
         uint16_t* cur_db_l = dbg_light_list;
@@ -1784,7 +2105,7 @@ private:
 
       // Advance to next frame. Rendering thread will be kicked to
       // process submitted rendering primitives.
-      bgfx::frame();
+      frameReturn = bgfx::frame();
       ++frameID;
 
       return true;

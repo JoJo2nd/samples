@@ -6,6 +6,7 @@
 #include <bimg/bimg.h>
 #include <vector>
 #include "bx/readerwriter.h"
+#include "ktx.h"
 
 typedef uint16_t half_t;
 

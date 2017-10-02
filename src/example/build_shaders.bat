@@ -44,6 +44,8 @@ call "%SHADERC%" -f "%DATASRC%/shaders/calc_luminance.sc" %SHADER_INC% --type fr
 call "%SHADERC%" -f "%DATASRC%/shaders/logLumaAv.cc" %SHADER_INC% --type compute -o "%DATADEST%/log_luminance_avg.cs" -p cs_5_0 --platform windows %DEBUG_SHADERS%
 
 call "%SHADERC%" -f "%DATASRC%/shaders/ir_convolve.sc" %SHADER_INC% --type fragment -o "%DATADEST%/ir_convolve.ps" -p ps_5_0 --platform windows %DEBUG_SHADERS%
+call "%SHADERC%" -f "%DATASRC%/shaders/sir_convolve.sc" %SHADER_INC% --type fragment -o "%DATADEST%/sir_convolve.ps" -p ps_5_0 --platform windows %DEBUG_SHADERS%
+call "%SHADERC%" -f "%DATASRC%/shaders/brdf_convolve.sc" %SHADER_INC% --type fragment -o "%DATADEST%/brdf_convolve.ps" -p ps_5_0 --platform windows %DEBUG_SHADERS%
 
 rem del /Q "%DATADEST%\*.hlsl"
 

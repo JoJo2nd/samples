@@ -21,7 +21,7 @@ void main()
         normal = normalize( vec3(uv.x, 1, uv.y) );
         up = vec3(0, 0, 1);
     } else if (u_cubeFace.x == 3) {
-        normal = normalize( vec3(-uv.x, -1, -uv.y) );
+        normal = normalize( vec3(uv.x, -1, -uv.y) );
         up = vec3(0, 0, 1);
     } else if (u_cubeFace.x == 4) {
         normal = normalize( vec3(uv.x, -uv.y, 1) );
@@ -36,7 +36,7 @@ void main()
     up         = cross(normal, right);
 
     float sampleDelta = 0.025;
-    float sampleDelta2 = 0.1;
+    float sampleDelta2 = 0.025;
     float nrSamples = 0.0; 
     for(float phi = 0.0; phi < 2.0 * PI; phi += sampleDelta)
     {
@@ -50,7 +50,7 @@ void main()
 
             vec3 temp = cos(phi) * right + sin(phi) * up;
             vec3 sampleVector = cos(theta) * normal + sin(theta) * temp;
-            irradiance += clamp(textureCubeLod( s_environmentMap, sampleVector, 0 ).rgb, 0, 20) *  cos(theta) * sin(theta);
+            irradiance += clamp(textureCubeLod( s_environmentMap, sampleVector, 0 ).rgb, 0, 10) *  cos(theta) * sin(theta);
 
             nrSamples++;
         }
