@@ -21,3 +21,26 @@ SAMPLER2D(s_mask, 4);
 // colour LUT
 SAMPLER3D(s_colourLUT, 5);
 SAMPLERCUBE(s_environmentMap, 6);
+
+// IBL
+SAMPLER2D(s_bdrfLUT, 7);
+
+struct BgfxSamplerCubeArray {
+    SamplerState m_sampler;
+    TextureCubeArray m_texture;
+};
+
+#define SAMPLERCUBEARRAY(_name, _reg) \
+    uniform SamplerState _name ## Sampler : REGISTER(s, _reg); \
+    uniform TextureCube _name ## Texture : REGISTER(t, _reg); \
+    static BgfxSamplerCubeArray _name = { _name ## Sampler, _name ## Texture }
+
+#define textureCubeArrayLod(sampler, coord, mip) bgfxTextureCubeLod(sampler, coord, mip)
+
+vec4 bgfxTextureCubeLod(BgfxSamplerCubeArray _sampler, vec4 _coord, uint _level)
+{
+    return _sampler.m_texture.SampleLevel(_sampler.m_sampler, _coord, _level);
+}
+
+SAMPLERCUBEARRAY(s_irradiance, 8);
+SAMPLERCUBEARRAY(s_specIrradiance, 9);

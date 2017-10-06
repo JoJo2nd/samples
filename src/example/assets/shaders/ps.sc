@@ -12,6 +12,8 @@ uniform vec4 u_sunlight;
 uniform vec4 u_ambientColour;
 uniform vec4 u_debugMode;
 uniform vec4 u_dynamicLights;
+uniform vec4 u_gridParams;
+uniform vec4 u_gridOffset; // 
 #if NO_TEXTURES
 uniform vec4 u_albedo; 
 uniform vec4 u_metalrough; // x: metal y: rough
@@ -40,6 +42,10 @@ uint2 read_z_bin(float vs_depth) {
 float fresnel_schlick(vec3 col, vec3 eye, vec3 half) {
     float exp = pow(1 - dot(eye, half), 5.0);
     return saturate(col + (1 - col) * exp).x;
+}
+
+vec3 fresnel_schlick_roughness(vec3 spec_col, vec3 eye, vec3 norm, float gloss) {
+    return spec_col + (max(gloss, spec_col) - spec_col) + pow(1-saturate(dot(eye, norm)), 5);
 }
 
 vec3 encode_vec(vec3 pos) {
@@ -137,34 +143,74 @@ vec3 readNormalMap(vec3 v_norm, vec3 v_tang, vec3 v_bitang, vec2 uv) {
     normal.xy = texture2D(s_normal, uv).xy * 2.0 - 1.0;
     normal.z = sqrt(1.0 - dot(normal.xy, normal.xy) );
     normal = mul(fromTangentSpace, normal);
-    normal = mul(u_view, normal);
+    //normal = mul(u_view, normal);
     return normal;
 }
 
+vec3 calculateIBL(vec3 pos_ws, vec3 to_eye, vec3 normal, vec3 albedo, float roughness, float metal) {
+    vec3 loc_v = floor((pos_ws-u_gridOffset.xyz)/u_gridParams.w);
+    //float loc_i = loc_v.z*u_gridParams[0]*u_gridParams[1] + loc_v.y*u_gridParams[0] + loc_v.x;
+    float loc_i = dot(vec3(1, u_gridParams[0], u_gridParams[0]*u_gridParams[1]), loc_v);
+
+    vec3 kS = fresnel_schlick_roughness(metal ? albedo : SHADER_NONMETAL_SPEC_COLOUR, to_eye, normal, roughness);
+    vec3 kD = 1.0 - kS;
+    kD *= 1.0 - metal;
+
+    vec3 irr = textureCubeArrayLod(s_irradiance, vec4(normal.xyz, loc_i), 0);
+    vec3 diffuse = albedo * irr;
+
+    if (u_debugMode.x == 7.0) {
+        return kD * diffuse;
+    }
+
+    vec3 r = reflect(to_eye, normal);
+    vec3 spec_irr = textureCubeArrayLod(s_specIrradiance, vec4(r.xyz, loc_i), floor(roughness*10)).rgb;
+    vec2 env_bdrf = texture2D(s_bdrfLUT, vec2(max(dot(normal, to_eye), 0), roughness));
+    vec3 spec_c = spec_irr * (kS * env_bdrf.x + env_bdrf.y);
+
+    if (u_debugMode.x == 8.0) {
+        return spec_c;
+    }
+
+    return (kD * diffuse + spec_c);
+
+    //return to_eye * 5. + .5;
+    //return (loc_i/72.0).xxx;
+    //return spec_irr * loc_v / vec3(6,3,4);
+    //return spec_irr;
+    //return irr + spec_irr;
+    //return irr;
+    //return spec_c;
+    //return vec3(env_bdrf.xy, 0);
+}
+
 void main() {
-    vec3 sunlight_vs = normalize(mul(u_view, vec4(u_sunlight.xyz, 1))).xyz;
+    vec3 sunlight_vs = normalize(mul((mat3)u_view, u_sunlight.xyz));
     uint2 grid_info = light_grid_data(gl_FragCoord.xy);
     uint2 z_bin = read_z_bin(v_view.z);
 
     vec2 uv = vec2(v_texcoord0.x, 1-v_texcoord0.y);
 
 #if !NO_TEXTURES
+//#if ALPHA_MASK
+    float mask = texture2D(s_mask, uv);
+    if (mask < 0.5)
+        discard;
+//#endif
     vec4 albedo = texture2D(s_base, uv);
-    vec3 normal = readNormalMap(v_normal, v_tangent, v_bitangent, uv);
+    //vec3 normal_ws = normalize(v_normal);
+    vec3 normal_ws = readNormalMap(v_normal, v_tangent, v_bitangent, uv);
+    vec3 normal = mul(u_view, normal_ws);
     vec3 metal_value = texture2D(s_metallic, uv);
     bool metal = metal_value > 0;
     vec4 rough = texture2D(s_roughness, uv);
 #else
     vec4 albedo = u_albedo;
+    vec3 normal_ws = normalize(v_normal);
     vec3 normal = normalize(mul(u_view,v_normal));
     vec3 metal_value = u_metalrough.xxx;
     bool metal = u_metalrough.x > 0;
     vec4 rough = u_metalrough.yyyy;
-#endif
-#if ALPHA_MASK
-    float mask = texture2D(s_mask, uv);
-    if (mask <= 0)
-        discard;
 #endif
 
 #if DEBUG_MODES
@@ -175,7 +221,7 @@ void main() {
             return;
         }
         if (u_debugMode.x == 2.0) {
-            gl_FragColor.rgb = normal.rgb;
+            gl_FragColor.rgb = normal_ws.rgb * .5 + .5;
             return;
         }
         if (u_debugMode.x == 3.0) {
@@ -190,8 +236,19 @@ void main() {
 #endif
     gl_FragColor.w = 1.0;
 
+    gl_FragColor.rgb = vec3(0, 0, 0);
+    if (u_dynamicLights.x > 0)  {
+        vec3 ibl = calculateIBL(v_wpos, normalize(mul(u_invView, normalize(v_view))), normal_ws, albedo, rough, metal);
+        if (u_debugMode.x > 6.0) {
+            gl_FragColor.rgb = ibl;
+            return;
+        } else if (u_debugMode.x == 0.0) {
+            gl_FragColor.rgb = ibl;
+        }
+    }
+
     // Ambient
-    gl_FragColor.rgb = (u_ambientColour.rgb * albedo.rgb) * u_ambientColour.a;
+    gl_FragColor.rgb += (u_ambientColour.rgb * albedo.rgb) * u_ambientColour.a;
     if (u_debugMode.x != 0.0 && u_debugMode.x != 5.0) {
         gl_FragColor.rgb *= 0;
     }

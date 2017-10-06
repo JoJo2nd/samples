@@ -103,7 +103,7 @@ void mesh_load(Mesh* m, bx::ReaderSeekerI* _reader) {
 
         bx::memSet(prim.m_material, 0, 64);
         bx::memCopy(prim.m_material, name.c_str(), len < 63 ? len : 63);
-
+        prim.m_materialIndex = -1;
         group.m_prims.push_back(prim);
       }
 
@@ -157,7 +157,9 @@ void mesh_submit(Mesh*                            m,
                  const float*                     _mtx,
                  uint64_t                         _state,
                  bgfx::UniformHandle*             textures,
-                 bgfx::DynamicVertexBufferHandle* buffers) {
+                 bgfx::DynamicVertexBufferHandle* buffers,
+                 Texture*                         extraTex,
+                 uint32_t                         extraTexCount) {
   if (BGFX_STATE_MASK == _state) {
     _state = 0 | BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_WRITE | BGFX_STATE_DEPTH_TEST_LESS |
              BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA;
@@ -177,29 +179,36 @@ void mesh_submit(Mesh*                            m,
     bgfx::setBuffer(14, buffers[4], bgfx::Access::Read);
 
     if (group.m_prims[0].m_materialIndex >= 0) {
-      MaterialData* mdat = m->materials->materials + group.m_prims[0].m_materialIndex;
-      // Don't fill the z buffer if a mask is needed.
-      if ((mdat->flags & MATERIAL_MASK_FLAG)) continue;
-      for (uint32_t tt = 0; tt < MATERIAL_MAX; ++tt) {
-        if (mdat->flags & (1 << tt)) {
-          bgfx::setTexture(tt, textures[tt], mdat->all[tt]);
+      if (m->materials) {
+        MaterialData* mdat = m->materials->materials + group.m_prims[0].m_materialIndex;
+        // Don't fill the z buffer if a mask is needed.
+        if ((mdat->flags & MATERIAL_MASK_FLAG)) continue;
+        for (uint32_t tt = 0; tt < MATERIAL_MAX; ++tt) {
+          if (mdat->flags & (1 << tt)) {
+            bgfx::setTexture(tt, textures[tt], mdat->all[tt]);
+          }
         }
       }
-      bgfx::setIndexBuffer(group.m_ibh);
-      bgfx::setVertexBuffer(0, group.m_vbh);
-      bgfx::submit(_id, _program, 0, false);
     }
+    for (uint32_t tt = 0; tt < extraTexCount; ++tt) {
+      bgfx::setTexture(extraTex[tt].stage, extraTex[tt].uniform, extraTex[tt].tex);
+    }
+    bgfx::setIndexBuffer(group.m_ibh);
+    bgfx::setVertexBuffer(0, group.m_vbh);
+    bgfx::submit(_id, _program, 0, false);
   }
 }
 
 void mesh_submit(Mesh*                            m,
                  uint8_t                          _id,
                  bgfx::ProgramHandle              _program,
-                 bgfx::ProgramHandle              maskprogram,
+                 bgfx::TextureHandle              defaultTex,
                  const float*                     _mtx,
                  uint64_t                         _state,
                  bgfx::UniformHandle*             textures,
-                 bgfx::DynamicVertexBufferHandle* buffers) {
+                 bgfx::DynamicVertexBufferHandle* buffers,
+                 Texture*                         extraTex,
+                 uint32_t                         extraTexCount) {
   uint64_t mask_state = 0 | BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_WRITE |
                         BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA;
   if (BGFX_STATE_MASK == _state) {
@@ -221,22 +230,23 @@ void mesh_submit(Mesh*                            m,
 
     if (group.m_prims[0].m_materialIndex >= 0) {
       MaterialData* mdat = m->materials->materials + group.m_prims[0].m_materialIndex;
-      if (!bgfx::isValid(maskprogram) && (mdat->flags & MATERIAL_MASK_FLAG)) continue;
+      // Don't submit masked objecst.
+      if ((mdat->flags & MATERIAL_MASK_FLAG)) continue;
 
       for (uint32_t tt = 0; tt < MATERIAL_MAX; ++tt) {
         if (mdat->flags & (1 << tt)) {
           bgfx::setTexture(tt, textures[tt], mdat->all[tt]);
+        } else {
+          bgfx::setTexture(tt, textures[tt], defaultTex);
         }
+      }
+      for (uint32_t tt = 0; tt < extraTexCount; ++tt) {
+        bgfx::setTexture(extraTex[tt].stage, extraTex[tt].uniform, extraTex[tt].tex);
       }
       bgfx::setIndexBuffer(group.m_ibh);
       bgfx::setVertexBuffer(0, group.m_vbh);
-      if (bgfx::isValid(maskprogram) && (mdat->flags & MATERIAL_MASK_FLAG)) {
-        bgfx::setState(mask_state);
-        bgfx::submit(_id, maskprogram, 0, false);
-      } else {
-        bgfx::setState(_state);
-        bgfx::submit(_id, _program, 0, false);
-      }
+      bgfx::setState(_state);
+      bgfx::submit(_id, _program, 0, false);
     }
   }
 }

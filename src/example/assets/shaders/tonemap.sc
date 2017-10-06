@@ -21,7 +21,8 @@ void main() {
     vec4 base = texture2D(s_base, uv);
 
     //float avg = averageLuma[0];
-    float avg = exp2(texture2D(s_luminance, vec2(.5,.5)));
+    //float avg = exp2(texture2D(s_luminance, vec2(.5,.5)));
+    float avg = 0.6;
     // 0.18 is middle grey
     float exp_scale = u_exposureKey / (clamp(avg, u_exposureMin, u_exposureMax));
     base.rgb *= exp_scale;

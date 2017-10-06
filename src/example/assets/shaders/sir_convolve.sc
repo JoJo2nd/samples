@@ -45,7 +45,7 @@ void main()
         if(NdotL > 0.0)
         {
             vec3 cc = textureCube(s_environmentMap, L).rgb;
-            prefilteredColor += mix(vec3(100,100,100), cc, isfinite(cc)) * NdotL;
+            prefilteredColor += cc * NdotL;
             totalWeight      += NdotL;
         }
     }

@@ -23,6 +23,8 @@
 #include "common_defines.h"
 #include "bx/readerwriter.h"
 
+#include <windows.h>
+
 static float s_texelHalf = 0.0f;
 bool         dbgCaptureCubemap = 0; // when true, capturing cubemap faces
 bool         dbgWaitingOnReadback = 0;
@@ -33,12 +35,18 @@ uint32_t frameReturn;
 bgfx::UniformHandle dynLightsUniform;
 bgfx::UniformHandle cubeFaceUniform;
 bgfx::UniformHandle environmentMapTex;
+bgfx::UniformHandle gridSizeUniform;
+bgfx::UniformHandle gridOffsetUniform;
+bgfx::UniformHandle specIrradianceAraryTex;
+bgfx::UniformHandle irradianceAraryTex;
+bgfx::UniformHandle bdrfTex;
 
 bgfx::FrameBufferHandle cubemapFaceTarget[6];
 bgfx::FrameBufferHandle irCubemapFaceTarget[6];
 bgfx::FrameBufferHandle sirCubemapFaceTarget[6][SIR_MIP_COUNT];
 bgfx::FrameBufferHandle bdrfConvolveTarget;
 
+bgfx::TextureHandle defaultMask;
 bgfx::TextureHandle cubemapDepthTexture;
 bgfx::TextureHandle cubemapFaceTexture;
 bgfx::TextureHandle cubemapFaceTextureRead[6];
@@ -48,6 +56,10 @@ bgfx::TextureHandle sirCubemapFaceTexture[SIR_MIP_COUNT];
 bgfx::TextureHandle sirCubemapFaceTextureRead[6][SIR_MIP_COUNT];
 bgfx::TextureHandle bdrfConvolveTexture;
 bgfx::TextureHandle bdrfConvolveTextureRead;
+
+bgfx::TextureHandle irCubemapArrayTexture = BGFX_INVALID_HANDLE;
+bgfx::TextureHandle specIRCubemapArrayTexture = BGFX_INVALID_HANDLE;
+bgfx::TextureHandle bdrfTexture = BGFX_INVALID_HANDLE;
 
 float    totalBoundsMin[3] = {FLT_MAX, FLT_MAX, FLT_MAX};
 float    totalBoundsMax[3] = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
@@ -488,7 +500,7 @@ private:
   bool dbgDrawLightsWire = false;
   bool dbgDrawZBin = false;
   bool dbgDebugStats = false;
-  bool dbgDebugMoveLights = true;
+  bool dbgDebugMoveLights = false;
   bool dbgPixelAvgLuminance = true;
 
   void unloadAssetData(RunParams* data, uint32_t data_count) {
@@ -606,6 +618,92 @@ private:
     bdrfConvolveProg = bgfx::createProgram(bgfx::createShader(vs), bgfx::createShader(ps), true);
   }
 
+  void createIRCubemapArrays(uint32_t             map_dim[3],
+                             bgfx::TextureHandle* ir_cma,
+                             bgfx::TextureHandle* sir_cma,
+                             bgfx::TextureHandle* bgfx_th) {
+    char     tmp_fn[1024];
+    uint32_t total_cms = map_dim[2] * map_dim[1] * map_dim[0];
+    uint32_t sir_mip_size[SIR_MIP_COUNT];
+    uint32_t sir_mip_write_offset[6][SIR_MIP_COUNT];
+    uint32_t ir_cm_size = IR_MAP_DIM * IR_MAP_DIM * 6 * sizeof(half_t) * 4;
+    uint32_t sir_total_size = 0;
+    for (uint32_t i = 0; i < SIR_MIP_COUNT; ++i) {
+      sir_mip_size[i] = (SIR_MAP_DIM >> i) * (SIR_MAP_DIM >> i) * sizeof(half_t) * 4;
+      sir_total_size += sir_mip_size[i] * 6;
+    }
+
+    uint32_t tmp_offset = 0;
+    for (uint32_t i = 0; i < 6; ++i) {
+      for (uint32_t j = 0; j < SIR_MIP_COUNT; ++j) {
+        sir_mip_write_offset[i][j] = tmp_offset;
+        tmp_offset += sir_mip_size[j];
+      }
+    }
+
+    bgfx::Memory const* ir_temp_alloc = bgfx::alloc(total_cms * IR_MAP_DIM * IR_MAP_DIM * 6 * sizeof(half_t) * 4);
+    bgfx::Memory const* sir_temp_alloc = bgfx::alloc(total_cms * sir_total_size);
+    bgfx::Memory const* bdrf_temp_alloc = bgfx::alloc(BDRF_DIM * BDRF_DIM * sizeof(half_t) * 2);
+    void* ir_temp_mem = ir_temp_alloc->data;   // malloc(total_cms*IR_MAP_DIM*IR_MAP_DIM*6*sizeof(half_t)*4);
+    void* sir_temp_mem = sir_temp_alloc->data; // malloc(total_cms*sir_total_size);
+    void* bdrf_temp_mem = bdrf_temp_alloc->data;
+
+    // zero it all, incase nothing can be read
+    memset(ir_temp_mem, 0x0, total_cms * IR_MAP_DIM * IR_MAP_DIM * 6 * sizeof(half_t) * 4);
+    memset(sir_temp_mem, 0x0, total_cms * sir_total_size);
+
+    for (uint32_t z = 0, zn = map_dim[2]; z < zn; ++z) {
+      for (uint32_t y = 0, yn = map_dim[1]; y < yn; ++y) {
+        for (uint32_t x = 0, xn = map_dim[0]; x < xn; ++x) {
+          uint32_t cm_idx = (z * yn * xn) + (y * xn) + x;
+          sprintf(tmp_fn, "data/env/%dx%dx%d_ir.ktx", x, y, z);
+          FILE* f = fopen(tmp_fn, "rb");
+          if (f) {
+            // seek past the header and image size
+            fseek(f, sizeof ktxheader_t + sizeof uint32_t, SEEK_CUR);
+            fread(((uint8_t*)ir_temp_mem) + cm_idx * ir_cm_size, 1, ir_cm_size, f);
+            fclose(f);
+          }
+          sprintf(tmp_fn, "data/env/%dx%dx%d_sir.ktx", x, y, z);
+          f = fopen(tmp_fn, "rb");
+          if (f) {
+            uint8_t* mip_ptr = ((uint8_t*)sir_temp_mem) + cm_idx * sir_total_size;
+            fseek(f, sizeof ktxheader_t, SEEK_CUR);
+            for (uint32_t m = 0, mn = SIR_MIP_COUNT; m < mn; ++m) {
+              // skip mip size
+              fseek(f, sizeof uint32_t, SEEK_CUR);
+              for (uint32_t j = 0; j < 6; ++j) {
+                // read the mip data
+                fread(mip_ptr + sir_mip_write_offset[j][m], 1, sir_mip_size[m], f);
+              }
+              // mip_ptr += sir_mip_size[m];
+            }
+          }
+          sprintf(tmp_fn, "%dx%dx%d - index = %d\n", x, y, z, cm_idx);
+          OutputDebugString(tmp_fn);
+        }
+      }
+    }
+
+    FILE* f = fopen("data/env/bdrf.ktx", "rb");
+    if (f) {
+      fseek(f, sizeof ktxheader_t + sizeof uint32_t, SEEK_CUR);
+      fread(bdrf_temp_mem, 1, BDRF_DIM * BDRF_DIM * sizeof(half_t) * 2, f);
+      fclose(f);
+    }
+
+    // create our textures
+    *ir_cma = bgfx::createTextureCube(
+      IR_MAP_DIM, false, total_cms, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_NONE, ir_temp_alloc);
+    *sir_cma = bgfx::createTextureCube(
+      SIR_MAP_DIM, true, total_cms, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_NONE, sir_temp_alloc);
+    *bgfx_th = bgfx::createTexture2D(
+      BDRF_DIM, BDRF_DIM, false, 1, bgfx::TextureFormat::RG16F, BGFX_TEXTURE_NONE, bdrf_temp_alloc);
+
+    // free(ir_temp_mem);
+    // free(sir_temp_mem);
+  }
+
   void init(int32_t _argc, const char* const* _argv, uint32_t _width, uint32_t _height) {
     Args args(_argc, _argv);
 
@@ -701,6 +799,8 @@ private:
     ambientColourUniform = bgfx::createUniform("u_ambientColour", bgfx::UniformType::Vec4);
     dynLightsUniform = bgfx::createUniform("u_dynamicLights", bgfx::UniformType::Vec4);
     cubeFaceUniform = bgfx::createUniform("u_cubeFace", bgfx::UniformType::Vec4);
+    gridSizeUniform = bgfx::createUniform("u_gridParams", bgfx::UniformType::Vec4);
+    gridOffsetUniform = bgfx::createUniform("u_gridOffset", bgfx::UniformType::Vec4);
 
     baseTex = bgfx::createUniform("s_base", bgfx::UniformType::Int1);
     normalTex = bgfx::createUniform("s_normal", bgfx::UniformType::Int1);
@@ -710,6 +810,10 @@ private:
     luminanceTex = bgfx::createUniform("s_luminance", bgfx::UniformType::Int1);
     colourLUTTex = bgfx::createUniform("s_colourLUT", bgfx::UniformType::Int1);
     environmentMapTex = bgfx::createUniform("s_environmentMap", bgfx::UniformType::Int1);
+    irradianceAraryTex = bgfx::createUniform("s_irradiance", bgfx::UniformType::Int1);
+    specIrradianceAraryTex = bgfx::createUniform("s_specIrradiance", bgfx::UniformType::Int1);
+    bdrfTex = bgfx::createUniform("s_bdrfLUT", bgfx::UniformType::Int1);
+
 
     lights = new LightInit[LIGHT_COUNT];
     float  scale = 4.f;
@@ -795,9 +899,10 @@ private:
       floatVertexDecl,
       BGFX_BUFFER_COMPUTE_READ_WRITE | BGFX_BUFFER_COMPUTE_FORMAT_32x1 | BGFX_BUFFER_COMPUTE_TYPE_FLOAT);
 
-    bdrfConvolveTexture = bgfx::createTexture2D(BDRF_DIM, BDRF_DIM, false, 1, bgfx::TextureFormat::RG16F, BGFX_TEXTURE_RT);
-    bdrfConvolveTextureRead =
-      bgfx::createTexture2D(BDRF_DIM, BDRF_DIM, false, 1, bgfx::TextureFormat::RG16F, BGFX_TEXTURE_READ_BACK | BGFX_TEXTURE_BLIT_DST);
+    bdrfConvolveTexture =
+      bgfx::createTexture2D(BDRF_DIM, BDRF_DIM, false, 1, bgfx::TextureFormat::RG16F, BGFX_TEXTURE_RT);
+    bdrfConvolveTextureRead = bgfx::createTexture2D(
+      BDRF_DIM, BDRF_DIM, false, 1, bgfx::TextureFormat::RG16F, BGFX_TEXTURE_READ_BACK | BGFX_TEXTURE_BLIT_DST);
     bdrfConvolveTarget = bgfx::createFrameBuffer(1, &bdrfConvolveTexture);
 
     numLuminanceMips = 0;
@@ -811,6 +916,10 @@ private:
       if (luminance_w > 1) luminance_w /= 2;
       if (luminance_h > 1) luminance_h /= 2;
     }
+
+    bgfx::Memory const* mask_data_mem = bgfx::alloc(1);
+    mask_data_mem->data[0] = 255;
+    defaultMask = bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::R8, BGFX_TEXTURE_NONE, mask_data_mem);
 
     // Create cubemap framebuffers
     cubemapDepthTexture = bgfx::createTexture2D(m_width, m_width, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_RT);
@@ -929,6 +1038,8 @@ private:
 
     ddInit();
     imguiCreate();
+
+    createIRCubemapArrays(envMapGridDim, &irCubemapArrayTexture, &specIRCubemapArrayTexture, &bdrfTexture);
 
     // IR_MAP_DIMxIR_MAP_DIMxIR_MAP_DIM of RGBA 16bit float data
     irCubemapFaceTextureReadCPUData = malloc(IR_MAP_DIM * IR_MAP_DIM * 6 * sizeof(half_t) * 4);
@@ -1332,6 +1443,14 @@ private:
       float timeVec[4] = {time, 0.f, 0.f, 0.f};
       bgfx::setUniform(timeUniform, timeVec);
 
+      float gridVec[4] = {
+        (float)envMapGridDim[0], (float)envMapGridDim[1], (float)envMapGridDim[2], (float)ENV_MAP_GRID_DIM};
+      bgfx::setUniform(gridSizeUniform, gridVec);
+      gridVec[0] = totalBoundsMin[0];
+      gridVec[1] = totalBoundsMin[1];
+      gridVec[2] = totalBoundsMin[2];
+      bgfx::setUniform(gridOffsetUniform, gridVec);
+
       // setup sunlight
       float  sunlight[4] = {0.f, 0.f, 1.f, sunlightAngle[3]};
       vec3_t sunforward = {0.f, 0.f, 1.f}, sunforward2;
@@ -1419,6 +1538,8 @@ private:
           ImGui::RadioButton("roughness", &dbgVisMode, 4);
           ImGui::RadioButton("diffuse", &dbgVisMode, 5);
           ImGui::RadioButton("specular", &dbgVisMode, 6);
+          ImGui::RadioButton("diffuse IBL", &dbgVisMode, 7);
+          ImGui::RadioButton("specular IBL", &dbgVisMode, 8);
         }
         if (ImGui::CollapsingHeader("Debug")) {
           char const* shader_names[SOLID_PROGS] = {nullptr};
@@ -1525,8 +1646,16 @@ private:
         enableCPUUpdateLightGrid ? lightGridBuffer : lightGridFatBuffer,
       };
 
+      util::Texture env_texs[] = {
+        {7, bdrfTex, bdrfTexture},
+        {8, irradianceAraryTex, irCubemapArrayTexture},
+        {9, specIrradianceAraryTex, specIRCubemapArrayTexture},
+      };
+
       if (!dbgCaptureCubemap) {
+        // enable lights, enable ibl
         uniformDataTmp[0] = 1.f;
+        uniformDataTmp[1] = 1.f;
         bgfx::setUniform(dynLightsUniform, uniformDataTmp);
         bgfx::setUniform(sunlightUniform, sunlight);
 
@@ -1571,7 +1700,9 @@ private:
                       mTmp,
                       BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA,
                       handles,
-                      buffer);
+                      buffer,
+                      env_texs,
+                      3);
           for (uint32_t o = 0; o < TOTAL_ORBS; ++o) {
             float model[16];
             bx::mtxTranslate(model, Orbs[o].position.x, Orbs[o].position.y, Orbs[o].position.z);
@@ -1594,12 +1725,14 @@ private:
         mesh_submit(&m_mesh,
                     RENDER_PASS_SOLID,
                     ShaderParams[dbgShader].solidProg,
-                    BGFX_INVALID_HANDLE /*ShaderParams[dbgShader].solidProgMask*/,
+                    defaultMask,
                     mTmp,
                     BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_TEST_LEQUAL |
                       BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA,
                     handles,
-                    buffer);
+                    buffer,
+                    env_texs,
+                    3);
         for (uint32_t o = 0; o < TOTAL_ORBS; ++o) {
           float model[16];
           bx::mtxScale(model, 2.5f);
@@ -1619,7 +1752,11 @@ private:
                       ShaderParams[dbgShader].solidProgNoTex,
                       model,
                       BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_TEST_LEQUAL |
-                        BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
+                        BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA,
+                      handles,
+                      buffer,
+                      env_texs,
+                      3);
         }
 
         bool enableFullscreenQuad = bgfx::isValid(ShaderParams[dbgShader].fullscreenProg);
@@ -1826,6 +1963,10 @@ private:
           }
           if (envMapCurrentCell[2] >= envMapGridDim[2]) {
             dbgCaptureCubemap = false;
+            bgfx::destroy(irCubemapArrayTexture);
+            bgfx::destroy(specIRCubemapArrayTexture);
+            bgfx::destroy(bdrfTexture);
+            createIRCubemapArrays(envMapGridDim, &irCubemapArrayTexture, &specIRCubemapArrayTexture, &bdrfTexture);
           }
           dbgWaitingOnReadback = false;
         }
@@ -1893,20 +2034,23 @@ private:
         }
 
         // submit any cubemap stuff
-        // disable lights
+        // disable lights, disable ibl
         uniformDataTmp[0] = 0.f;
+        uniformDataTmp[1] = 0.f;
         bgfx::setUniform(dynLightsUniform, uniformDataTmp);
 
         for (uint32_t i = 0; i < 6; ++i) {
           mesh_submit(&m_mesh,
                       RENDER_PASS_CUBEMAP_FACE_PX + i,
                       ShaderParams[dbgShader].solidProg,
-                      ShaderParams[dbgShader].solidProgMask,
+                      defaultMask,
                       mTmp,
                       BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_TEST_LEQUAL |
                         BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA,
                       handles,
-                      buffer);
+                      buffer,
+                      env_texs,
+                      2);
           for (uint32_t o = 0; o < TOTAL_ORBS; ++o) {
             float model[16];
             bx::mtxScale(model, 2.5f);

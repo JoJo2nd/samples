@@ -68,6 +68,12 @@ struct Mesh {
   MeshMaterials*   materials;
 };
 
+struct Texture {
+  uint32_t            stage;
+  bgfx::UniformHandle uniform;
+  bgfx::TextureHandle tex;
+};
+
 void mesh_load(Mesh* m, bx::ReaderSeekerI* _reader);
 void mesh_bind_materials(Mesh* m, MeshMaterials* mats);
 void mesh_unload(Mesh* m);
@@ -77,15 +83,19 @@ void mesh_submit(Mesh*                            m,
                  const float*                     _mtx,
                  uint64_t                         _state,
                  bgfx::UniformHandle*             textures,
-                 bgfx::DynamicVertexBufferHandle* buffers);
+                 bgfx::DynamicVertexBufferHandle* buffers,
+                 Texture*                         extraTex,
+                 uint32_t                         extraTexCount);
 void mesh_submit(Mesh*                            m,
                  uint8_t                          _id,
                  bgfx::ProgramHandle              _program,
-                 bgfx::ProgramHandle              maskprogram,
+                 bgfx::TextureHandle              defaultTex,
                  const float*                     _mtx,
                  uint64_t                         _state,
                  bgfx::UniformHandle*             textures,
-                 bgfx::DynamicVertexBufferHandle* buffers);
+                 bgfx::DynamicVertexBufferHandle* buffers,
+                 Texture*                         extraTex,
+                 uint32_t                         extraTexCount);
 void mesh_submit(Mesh* m, uint8_t _id, bgfx::ProgramHandle _program, const float* _mtx, uint64_t _state);
 
 #define MATERIAL_HEADER_MAGIC (('M') | ('a' << 8) | ('t' << 16) | ('_' << 24))
