@@ -8,6 +8,10 @@
 #include "bx/readerwriter.h"
 #include "ktx.h"
 
+#define MIN(x, y) (x < y ? x : y)
+#define MAX(x, y) (x > y ? x : y)
+#define CLAMP(v, a, b) (v < a ? a : v > b ? b : v)
+
 typedef uint16_t half_t;
 
 namespace util {
@@ -194,4 +198,87 @@ inline half_t float_to_half(float f) {
 
   return ((half_t)((sign << 15) | (exponent << 10) | mantissa));
 }
+}
+
+struct vec3_t {
+  union {
+    float v[3];
+    struct {
+      float x, y, z;
+    };
+  };
+};
+
+typedef struct vec3_t vec3_t;
+
+inline void vec3_add(vec3_t* d, vec3_t const* a, vec3_t const* b) {
+  for (uint32_t i = 0; i < 3; ++i) {
+    d->v[i] = a->v[i] + b->v[i];
+  }
+}
+
+inline void vec3_add(vec3_t* d, vec3_t const* b) {
+  for (uint32_t i = 0; i < 3; ++i) {
+    d->v[i] += b->v[i];
+  }
+}
+
+inline void vec3_sub(vec3_t* d, vec3_t const* a, vec3_t const* b) {
+  for (uint32_t i = 0; i < 3; ++i) {
+    d->v[i] = a->v[i] - b->v[i];
+  }
+}
+
+inline void vec3_sub(vec3_t* d, vec3_t const* b) {
+  for (uint32_t i = 0; i < 3; ++i) {
+    d->v[i] -= b->v[i];
+  }
+}
+
+inline void vec3_scale(vec3_t* d, vec3_t const* ss, float s) {
+  for (uint32_t i = 0; i < 3; ++i) {
+    d->v[i] = ss->v[i] * s;
+  }
+}
+
+inline float vec3_dot(vec3_t const* a, vec3_t const* b) {
+  float d = 0;
+  for (uint32_t i = 0; i < 3; ++i) {
+    d += a->v[i] * b->v[i];
+  }
+  return d;
+}
+
+inline void vec3_cross(vec3_t* d, vec3_t const* a, vec3_t const* b) {
+  d->v[0] = ((a->v[1] * b->v[2]) - (a->v[2] * b->v[1]));
+  d->v[1] = ((a->v[2] * b->v[0]) - (a->v[0] * b->v[2]));
+  d->v[2] = ((a->v[0] * b->v[1]) - (a->v[1] * b->v[0]));
+}
+
+inline void vec3_norm(vec3_t* d, vec3_t* s) {
+  float dd = 1.f / sqrtf(s->v[0] * s->v[0] + s->v[1] * s->v[1] + s->v[2] * s->v[2]);
+  d->v[0] = s->v[0] * dd;
+  d->v[1] = s->v[1] * dd;
+  d->v[2] = s->v[2] * dd;
+}
+
+inline uint8_t toGammaAccurate(float color_channel) {
+  float lo = color_channel * 12.92f;
+  float hi = powf(fabsf(color_channel), (1.0f / 2.4f)) * 1.055f - 0.055f;
+  float rgb = color_channel < 0.0031308f ? hi : lo;
+  return (uint8_t)CLAMP(rgb * 255, 0.f, 255.f);
+}
+
+struct plane_t {
+  vec3_t n;
+  float  d;
+};
+
+inline void plane_build(plane_t* dst, vec3_t const* a, vec3_t const* b, vec3_t const* c) {
+  vec3_t t1, t2, t3;
+  vec3_sub(&t1, b, a);
+  vec3_sub(&t2, c, a);
+  vec3_cross(&t3, &t1, &t2);
+  vec3_norm(&dst->n, &t3);
+  dst->d = vec3_dot(&dst->n, a);
 }

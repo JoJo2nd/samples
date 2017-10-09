@@ -93,10 +93,7 @@
 #define PI (3.1415926535897932384626433832795f)
 #define ONE_OVER_PI (1.f / PI)
 #define deg_to_rad(x) (x * (PI / 180.f))
-
-#define MIN(x, y) (x < y ? x : y)
-#define MAX(x, y) (x > y ? x : y)
-#define CLAMP(v, a, b) (v < a ? a : v > b ? b : v)
+#define rad_to_deg(x) ((x / PI) * 180.f)
 
 #define SHADER_NONMETAL_SPEC_COLOUR (vec3(0.4, 0.4, 0.4))
 

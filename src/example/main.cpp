@@ -68,11 +68,20 @@ uint32_t envMapCurrentCell[3];
 uint32_t sirTotalWriteSize;
 uint32_t sirMipLevelSizeBytes[SIR_MIP_COUNT];           //*6 to get faces
 uint32_t sirMipFaceWriteOffsetLookUp[SIR_MIP_COUNT][6]; //
+uint32_t totalProbes;
+int32_t  curEditProbe;
+uint32_t curCaptureProbe;
 
 void* irCubemapFaceTextureReadCPUData;
 void* cubemapFaceTextureReadCPUData;
 void* sirCubemapFaceTextureReadCPUData;
 void* bdrfTextureReadCPUData;
+
+struct probe_t {
+  vec3_t position;
+  vec3_t halfWidths;
+} * probeArray; //[totalProbes]
+typedef struct probe_t probe_t;
 
 struct PosTexCoord0Vertex {
   float m_x;
@@ -167,73 +176,6 @@ void screenSpaceQuad(float _textureWidth,
   }
 }
 
-struct vec3_t {
-  union {
-    float v[3];
-    struct {
-      float x, y, z;
-    };
-  };
-};
-
-void vec3_add(vec3_t* d, vec3_t const* a, vec3_t const* b) {
-  for (uint32_t i = 0; i < 3; ++i) {
-    d->v[i] = a->v[i] + b->v[i];
-  }
-}
-
-void vec3_add(vec3_t* d, vec3_t const* b) {
-  for (uint32_t i = 0; i < 3; ++i) {
-    d->v[i] += b->v[i];
-  }
-}
-
-void vec3_sub(vec3_t* d, vec3_t const* a, vec3_t const* b) {
-  for (uint32_t i = 0; i < 3; ++i) {
-    d->v[i] = a->v[i] - b->v[i];
-  }
-}
-
-void vec3_sub(vec3_t* d, vec3_t const* b) {
-  for (uint32_t i = 0; i < 3; ++i) {
-    d->v[i] -= b->v[i];
-  }
-}
-
-void vec3_scale(vec3_t* d, vec3_t const* ss, float s) {
-  for (uint32_t i = 0; i < 3; ++i) {
-    d->v[i] = ss->v[i] * s;
-  }
-}
-
-float vec3_dot(vec3_t const* a, vec3_t const* b) {
-  float d = 0;
-  for (uint32_t i = 0; i < 3; ++i) {
-    d += a->v[i] * b->v[i];
-  }
-  return d;
-}
-
-void vec3_cross(vec3_t* d, vec3_t const* a, vec3_t const* b) {
-  d->v[0] = ((a->v[1] * b->v[2]) - (a->v[2] * b->v[1]));
-  d->v[1] = ((a->v[2] * b->v[0]) - (a->v[0] * b->v[2]));
-  d->v[2] = ((a->v[0] * b->v[1]) - (a->v[1] * b->v[0]));
-}
-
-void vec3_norm(vec3_t* d, vec3_t* s) {
-  float dd = 1.f / sqrtf(s->v[0] * s->v[0] + s->v[1] * s->v[1] + s->v[2] * s->v[2]);
-  d->v[0] = s->v[0] * dd;
-  d->v[1] = s->v[1] * dd;
-  d->v[2] = s->v[2] * dd;
-}
-
-uint8_t toGammaAccurate(float color_channel) {
-  float lo = color_channel * 12.92f;
-  float hi = powf(fabsf(color_channel), (1.0f / 2.4f)) * 1.055f - 0.055f;
-  float rgb = color_channel < 0.0031308f ? hi : lo;
-  return (uint8_t)CLAMP(rgb * 255, 0.f, 255.f);
-}
-
 struct CameraParams {
   float  fovy, aspect, nearPlane, farPlane;
   float  x, y, z;
@@ -241,20 +183,6 @@ struct CameraParams {
   float  view[16];
   vec3_t up, right, forward;
 };
-
-struct plane_t {
-  vec3_t n;
-  float  d;
-};
-
-void plane_build(plane_t* dst, vec3_t const* a, vec3_t const* b, vec3_t const* c) {
-  vec3_t t1, t2, t3;
-  vec3_sub(&t1, b, a);
-  vec3_sub(&t2, c, a);
-  vec3_cross(&t3, &t1, &t2);
-  vec3_norm(&dst->n, &t3);
-  dst->d = vec3_dot(&dst->n, a);
-}
 
 struct LightInfo {
   vec3_t p;
@@ -502,6 +430,96 @@ private:
   bool dbgDebugStats = false;
   bool dbgDebugMoveLights = false;
   bool dbgPixelAvgLuminance = true;
+  bool dbgShowReflectionProbes = false;
+
+  template <typename t_ty>
+  void read(t_ty* dst, FILE* f) {
+    fread(dst, sizeof(t_ty), 1, f);
+  }
+
+  template <typename t_ty>
+  void write(FILE* f, t_ty const& src) {
+    fwrite(&src, sizeof(t_ty), 1, f);
+  }
+
+  static const uint32_t saveDataMagic = 0x80808335;
+  static const uint32_t saveDataVer = 1;
+
+  void loadData() {
+    FILE* f = fopen("data/save.dat", "rb");
+    if (f) {
+      uint32_t save_data_magic, save_data_ver;
+      read(&save_data_magic, f);
+      read(&save_data_ver, f);
+      if (save_data_magic != saveDataMagic) return;
+      if (save_data_ver > saveDataVer) return;
+
+      for (uint32_t i = 0; i < 4; ++i)
+        read(&sunlightAngle[i], f);
+      for (uint32_t i = 0; i < 4; ++i)
+        read(&ambientColour[i], f);
+      read(&curExposure, f);
+      read(&curExposureMin, f);
+      read(&curExposureMax, f);
+      read(&dbgLightGrid, f);
+      read(&dbgLightGridFrustum, f);
+      read(&dbgUpdateFrustum, f);
+      read(&dbgDrawLights, f);
+      read(&dbgDrawLightsWire, f);
+      read(&dbgDrawZBin, f);
+      read(&dbgDebugStats, f);
+      read(&dbgDebugMoveLights, f);
+      read(&dbgPixelAvgLuminance, f);
+      read(&dbgShowReflectionProbes, f);
+
+      read(&totalProbes, f);
+      probeArray = (probe_t*)malloc(sizeof(probe_t) * totalProbes);
+      for (uint32_t i = 0, n = totalProbes; i < n; ++i) {
+        for (uint32_t j = 0; j < 3; ++j)
+          read(&probeArray[i].position.v[j], f);
+        for (uint32_t j = 0; j < 3; ++j)
+          read(&probeArray[i].halfWidths.v[j], f);
+      }
+
+      fclose(f);
+    }
+  }
+
+  void saveData() {
+    FILE* f = fopen("data/save.dat", "wb");
+    if (f) {
+      write(f, saveDataMagic);
+      write(f, saveDataVer);
+
+      for (uint32_t i = 0; i < 4; ++i)
+        write(f, sunlightAngle[i]);
+      for (uint32_t i = 0; i < 4; ++i)
+        write(f, ambientColour[i]);
+      write(f, curExposure);
+      write(f, curExposureMin);
+      write(f, curExposureMax);
+      write(f, dbgLightGrid);
+      write(f, dbgLightGridFrustum);
+      write(f, dbgUpdateFrustum);
+      write(f, dbgDrawLights);
+      write(f, dbgDrawLightsWire);
+      write(f, dbgDrawZBin);
+      write(f, dbgDebugStats);
+      write(f, dbgDebugMoveLights);
+      write(f, dbgPixelAvgLuminance);
+      write(f, dbgShowReflectionProbes);
+
+      write(f, totalProbes);
+      for (uint32_t i = 0, n = totalProbes; i < n; ++i) {
+        for (uint32_t j = 0; j < 3; ++j)
+          write(f, probeArray[i].position.v[j]);
+        for (uint32_t j = 0; j < 3; ++j)
+          write(f, probeArray[i].halfWidths.v[j]);
+      }
+
+      fclose(f);
+    }
+  }
 
   void unloadAssetData(RunParams* data, uint32_t data_count) {
     for (uint32_t i = 0, n = data_count; i < n; ++i) {
@@ -1039,6 +1057,8 @@ private:
     ddInit();
     imguiCreate();
 
+    loadData();
+
     createIRCubemapArrays(envMapGridDim, &irCubemapArrayTexture, &specIRCubemapArrayTexture, &bdrfTexture);
 
     // IR_MAP_DIMxIR_MAP_DIMxIR_MAP_DIM of RGBA 16bit float data
@@ -1082,6 +1102,9 @@ private:
     util::mesh_unload(&m_mesh);
     util::material_unload(&m_materials);
     unloadAssetData(ShaderParams, SOLID_PROGS);
+
+    saveData();
+
     // Shutdown bgfx.
     bgfx::shutdown();
 
@@ -1518,8 +1541,9 @@ private:
         ImGui::SameLine();
         if (ImGui::Button("Capture Cubemaps (Slow)")) {
           dbgCaptureCubemap = true;
+          curCaptureProbe = 1;
           for (uint32_t i = 0; i < 3; ++i)
-            envMapCurrentCell[i] = 0;
+            envMapCurrentCell[i] = envMapGridDim[i];
         }
         if (ImGui::CollapsingHeader("Render Control")) {
           ImGui::SliderFloat3("Sunlight Angle", sunlightAngle, 0.f, 360.f);
@@ -1558,12 +1582,35 @@ private:
           ImGui::SliderInt("Debug Cell Info Index", &dbgCell, 0, max_cell);
           ImGui::SliderInt("Debug Z Bin Info Index", &dbgBucket, 0, Z_BUCKETS);
           ImGui::Checkbox("Use Pixel Shader Average Luminance", &dbgPixelAvgLuminance);
+          ImGui::Checkbox("Show Reflection Probes", &dbgShowReflectionProbes);
         }
         if (ImGui::CollapsingHeader("CameraMatix")) {
           ImGui::Text("%f, %f, %f, %f", view[0], view[1], view[2], view[3]);
           ImGui::Text("%f, %f, %f, %f", view[4], view[5], view[6], view[7]);
           ImGui::Text("%f, %f, %f, %f", view[8], view[9], view[10], view[11]);
           ImGui::Text("%f, %f, %f, %f", view[12], view[13], view[14], view[15]);
+        }
+        if (ImGui::CollapsingHeader("Reflection Probes")) {
+          if (ImGui::Button("Add New Probe")) {
+            ++totalProbes;
+            probeArray = (probe_t*)realloc(probeArray, sizeof(*probeArray) * totalProbes);
+            probeArray[totalProbes - 1].position.x = 0.f;
+            probeArray[totalProbes - 1].position.y = 0.f;
+            probeArray[totalProbes - 1].position.z = 0.f;
+            probeArray[totalProbes - 1].halfWidths.x = .5f;
+            probeArray[totalProbes - 1].halfWidths.y = .5f;
+            probeArray[totalProbes - 1].halfWidths.z = .5f;
+          }
+          if (totalProbes > 0) {
+            ImGui::SliderInt("Edit Probe", &curEditProbe, 0, totalProbes - 1);
+
+            float bounds_min = MIN(totalBoundsMin[0], totalBoundsMin[1]);
+            bounds_min = MIN(totalBoundsMin[2], bounds_min);
+            float bounds_max = MAX(totalBoundsMax[0], totalBoundsMax[1]);
+            bounds_max = MAX(totalBoundsMax[2], bounds_max);
+            ImGui::SliderFloat3("Probe Position", probeArray[curEditProbe].position.v, bounds_min, bounds_max);
+            ImGui::SliderFloat3("Probe Size", probeArray[curEditProbe].halfWidths.v, 0.001f, 100.f);
+          }
         }
         // ImGui::Checkbox("Capture IR test cubemap", &dbgCaptureCubemap);
         // static int32_t cubemapface = 0;
@@ -1838,10 +1885,16 @@ private:
         bgfx::submit(RENDER_POST_DEBUG_BLIT, copyProg);
       } else if (dbgWaitingOnReadback) {
         if (frameReturn >= dbgCaptureReadyFrame) {
+          bool const capturingCustomProbes = envMapCurrentCell[0] >= envMapGridDim[0] &&
+                                             envMapCurrentCell[1] >= envMapGridDim[1] &&
+                                             envMapCurrentCell[2] >= envMapGridDim[2];
           char dstFile[1024];
 
           sprintf(
             dstFile, "data/env/%dx%dx%d_ir.ktx", envMapCurrentCell[0], envMapCurrentCell[1], envMapCurrentCell[2]);
+          if (capturingCustomProbes) {
+            sprintf(dstFile, "data/env/custom_%d_ir.ktx", curCaptureProbe - 1);
+          }
           char        ktx_id[12] = KTX_FILE_IDENT;
           ktxheader_t h;
           memcpy(h.identifier, ktx_id, sizeof h.identifier);
@@ -1870,6 +1923,9 @@ private:
 
           sprintf(
             dstFile, "data/env/%dx%dx%d_cm.ktx", envMapCurrentCell[0], envMapCurrentCell[1], envMapCurrentCell[2]);
+          if (capturingCustomProbes) {
+            sprintf(dstFile, "data/env/custom_%d_cm.ktx", curCaptureProbe - 1);
+          }
           memset(&h, 0, sizeof h);
           memcpy(h.identifier, ktx_id, sizeof h.identifier);
           h.endianness = KTX_ENDIANNESS_CHECK;
@@ -1896,6 +1952,9 @@ private:
 
           sprintf(
             dstFile, "data/env/%dx%dx%d_sir.ktx", envMapCurrentCell[0], envMapCurrentCell[1], envMapCurrentCell[2]);
+          if (capturingCustomProbes) {
+            sprintf(dstFile, "data/env/custom_%d_sir.ktx", curCaptureProbe - 1);
+          }
           memset(&h, 0, sizeof h);
           memcpy(h.identifier, ktx_id, sizeof h.identifier);
           h.endianness = KTX_ENDIANNESS_CHECK;
@@ -1952,21 +2011,27 @@ private:
             }
           }
 
-          ++envMapCurrentCell[0];
-          if (envMapCurrentCell[0] >= envMapGridDim[0]) {
-            envMapCurrentCell[0] = 0;
-            ++envMapCurrentCell[1];
-          }
-          if (envMapCurrentCell[1] >= envMapGridDim[1]) {
-            envMapCurrentCell[1] = 0;
-            ++envMapCurrentCell[2];
-          }
+		  if (!curCaptureProbe)
+		  {
+			  ++envMapCurrentCell[0];
+			  if (envMapCurrentCell[0] >= envMapGridDim[0]) {
+				  envMapCurrentCell[0] = 0;
+				  ++envMapCurrentCell[1];
+			  }
+			  if (envMapCurrentCell[1] >= envMapGridDim[1]) {
+				  envMapCurrentCell[1] = 0;
+				  ++envMapCurrentCell[2];
+			  }
+		  }
           if (envMapCurrentCell[2] >= envMapGridDim[2]) {
-            dbgCaptureCubemap = false;
-            bgfx::destroy(irCubemapArrayTexture);
-            bgfx::destroy(specIRCubemapArrayTexture);
-            bgfx::destroy(bdrfTexture);
-            createIRCubemapArrays(envMapGridDim, &irCubemapArrayTexture, &specIRCubemapArrayTexture, &bdrfTexture);
+            ++curCaptureProbe;
+            if (!(curCaptureProbe <= totalProbes)) {
+              dbgCaptureCubemap = false;
+              bgfx::destroy(irCubemapArrayTexture);
+              bgfx::destroy(specIRCubemapArrayTexture);
+              bgfx::destroy(bdrfTexture);
+              createIRCubemapArrays(envMapGridDim, &irCubemapArrayTexture, &specIRCubemapArrayTexture, &bdrfTexture);
+            }
           }
           dbgWaitingOnReadback = false;
         }
@@ -1983,20 +2048,61 @@ private:
         static vec3_t up_dir[6] = {
           {0.f, 1.f, 0.f}, {0.f, 1.f, 0.f}, {0.f, 0.f, -1.f}, {0.f, 0.f, 1.f}, {0.f, 1.f, 0.f}, {0.f, 1.f, 0.f},
         };
-        float  cm_view[6][16];
+        float      cm_view[6][16];
+        bool const capturingCustomProbes = envMapCurrentCell[0] >= envMapGridDim[0] &&
+                                           envMapCurrentCell[1] >= envMapGridDim[1] &&
+                                           envMapCurrentCell[2] >= envMapGridDim[2];
         vec3_t cur_cam_pos;
 
         cur_cam_pos.x = totalBoundsMin[0] + (envMapCurrentCell[0] * ENV_MAP_GRID_DIM) + ENV_MAP_GRID_DIM * .5f;
         cur_cam_pos.y = totalBoundsMin[1] + (envMapCurrentCell[1] * ENV_MAP_GRID_DIM) + ENV_MAP_GRID_DIM * .5f;
         cur_cam_pos.z = totalBoundsMin[2] + (envMapCurrentCell[2] * ENV_MAP_GRID_DIM) + ENV_MAP_GRID_DIM * .5f;
 
+        if (capturingCustomProbes) {
+          // capturing custom probes.
+          cur_cam_pos.x = probeArray[curCaptureProbe - 1].position.x;
+          cur_cam_pos.y = probeArray[curCaptureProbe - 1].position.y;
+          cur_cam_pos.z = probeArray[curCaptureProbe - 1].position.z;
+        }
+
         for (uint32_t i = 0; i < 6; ++i) {
           float  cm_proj[16], v_mtx_tmp[16] = {0};
           vec3_t r = r_dir[i], up = up_dir[i], fw;
 
-          // TODO: ensure this projects is correct for the grid cell. Currently won't match the faces of the cell? This
-          // results in seems in the cubemaps I suspect.
-          bx::mtxProj(cm_proj, 90.f, 1.f, cam.nearPlane, cam.farPlane, false);
+          // TODO: ensure this projects is correct for the grid cell. Currently won't match the faces of the cell
+          if (capturingCustomProbes) {
+            float fovy;
+            if (i == 0 || i == 1) { // +X, -X
+              fovy =
+                rad_to_deg(atan2(probeArray[curCaptureProbe - 1].halfWidths.y, probeArray[curCaptureProbe - 1].halfWidths.x)) * 2.f;
+              bx::mtxProj(cm_proj,
+                          fovy,
+                          probeArray[curCaptureProbe - 1].halfWidths.z / probeArray[curCaptureProbe - 1].halfWidths.y,
+                          0.001f,
+                          probeArray[curCaptureProbe - 1].halfWidths.x,
+                          false);
+            } else if (i == 2 || i == 3) { // +Y, -Y
+              fovy =
+                rad_to_deg(atan2(probeArray[curCaptureProbe - 1].halfWidths.z, probeArray[curCaptureProbe - 1].halfWidths.y)) * 2.f;
+              bx::mtxProj(cm_proj,
+                          fovy,
+                          probeArray[curCaptureProbe - 1].halfWidths.x / probeArray[curCaptureProbe - 1].halfWidths.z,
+                          0.001f,
+                          probeArray[curCaptureProbe - 1].halfWidths.y,
+                          false);
+            } else if (i == 4 || i == 5) { // +Z, -Z
+              fovy =
+                rad_to_deg(atan2(probeArray[curCaptureProbe - 1].halfWidths.y, probeArray[curCaptureProbe - 1].halfWidths.z)) * 2.f;
+              bx::mtxProj(cm_proj,
+                          fovy,
+                          probeArray[curCaptureProbe - 1].halfWidths.x / probeArray[curCaptureProbe - 1].halfWidths.y,
+                          0.001f,
+                          probeArray[curCaptureProbe - 1].halfWidths.z,
+                          false);
+            }
+          } else {
+            bx::mtxProj(cm_proj, 90.f, 1.f, cam.nearPlane, cam.farPlane, false);
+          }
           vec3_cross(&fw, &r, &up);
           v_mtx_tmp[0] = r.x;
           v_mtx_tmp[1] = r.y;
@@ -2200,6 +2306,24 @@ private:
             Sphere ll = {lights[i].p.x, lights[i].p.y, lights[i].p.z, lights[i].radius};
             ddDraw(ll);
           }
+        }
+        ddPop();
+      }
+
+      if (dbgShowReflectionProbes) {
+        ddPush();
+        ddSetWireframe(true);
+        ddSetColor(0xFFFF00FF);
+        for (uint32_t i = 0, n = totalProbes; i < n; ++i) {
+          Aabb p = {
+            probeArray[i].position.x - probeArray[i].halfWidths.x,
+            probeArray[i].position.y - probeArray[i].halfWidths.y,
+            probeArray[i].position.z - probeArray[i].halfWidths.z,
+            probeArray[i].position.x + probeArray[i].halfWidths.x,
+            probeArray[i].position.y + probeArray[i].halfWidths.y,
+            probeArray[i].position.z + probeArray[i].halfWidths.z,
+          };
+          ddDraw(p);
         }
         ddPop();
       }
