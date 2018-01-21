@@ -19,10 +19,13 @@ del /Q "%DATADEST%\*.cs"
 
 call "%SHADERC%" -f "%DATASRC%/shaders/vs.sc" %SHADER_INC% --type vertex -o "%DATADEST%/simple.vs" -p vs_5_0 --platform windows %DEBUG_SHADERS%
 call "%SHADERC%" -f "%DATASRC%/shaders/vs_postex.sc" %SHADER_INC% --type vertex -o "%DATADEST%/postex.vs" -p vs_5_0 --platform windows %DEBUG_SHADERS%
+call "%SHADERC%" -f "%DATASRC%/shaders/vs_skybox.sc" %SHADER_INC% --type vertex -o "%DATADEST%/skybox.vs" -p vs_5_0 --platform windows %DEBUG_SHADERS%
 
 call "%SHADERC%" -f "%DATASRC%/shaders/ps.sc" %SHADER_INC% --type fragment -o "%DATADEST%/simple.ps" -p ps_5_0 --platform windows %DEBUG_SHADERS%
 call "%SHADERC%" -f "%DATASRC%/shaders/ps.sc" %SHADER_INC% --type fragment -o "%DATADEST%/simple_nt.ps" -p ps_5_0 --platform windows %DEBUG_SHADERS% --define NO_TEXTURES=1
 call "%SHADERC%" -f "%DATASRC%/shaders/ps.sc" %SHADER_INC% --type fragment -o "%DATADEST%/simple_am.ps" -p ps_5_0 --platform windows %DEBUG_SHADERS% --define ALPHA_MASK=1
+
+call "%SHADERC%" -f "%DATASRC%/shaders/ps_skybox.sc" %SHADER_INC% --type fragment -o "%DATADEST%/skybox.ps" -p ps_5_0 --platform windows %DEBUG_SHADERS%
 
 call "%SHADERC%" -f "%DATASRC%/shaders/ps.sc" %SHADER_INC% --type fragment -o "%DATADEST%/debug01.ps" -p ps_5_0 --platform windows %DEBUG_SHADERS% --define DEBUG_LIGHT_EVAL=1
 call "%SHADERC%" -f "%DATASRC%/shaders/ps.sc" %SHADER_INC% --type fragment -o "%DATADEST%/debug02.ps" -p ps_5_0 --platform windows %DEBUG_SHADERS% --define DEBUG_LIGHT_EVAL=1;DEBUG_NO_BINS=1

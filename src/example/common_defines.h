@@ -5,6 +5,7 @@
 #define RENDER_PASS_COMPUTE (0)
 #define RENDER_PASS_ZPREPASS (1)
 #define RENDER_PASS_SOLID (2)
+#define RENDER_PASS_SKYBOX (3)
 
 #define RENDER_PASS_LUMINANCE_START (10)
 
@@ -79,6 +80,13 @@
 #define FS_DEBUG02_ASSET_PATH ("data/debug02.ps")
 #define FS_FSDEBUG_WCS_ASSET_PATH ("data/fs_debug_wcs.ps")
 #define FS_COPY_ASSET_PATH ("data/copy.ps")
+
+#define VS_SKYBOX_ASSET_PATH ("data/skybox.vs")
+#define FS_SKYBOX_ASSET_PATH ("data/skybox.ps")
+
+#define SKYBOX_ASSET_PATH ("data/kyoto_lods.dds")
+#define SKYBOX_IRR_ASSET_PATH ("data/kyoto_irr.dds")
+#define HDR_SKYBOX_ASSET_PATH ("data/skybox.hdr")
 
 #define TONEMAP_ASSET_PATH ("data/tonemap.ps")
 #define FS_LUMINANCE_AVG_ASSET_PATH ("data/log_luminance_avg.ps")

@@ -156,7 +156,8 @@ vec3 calculateIBL(vec3 pos_ws, vec3 to_eye, vec3 normal, vec3 albedo, float roug
     vec3 kD = 1.0 - kS;
     kD *= 1.0 - metal;
 
-    vec3 irr = textureCubeArrayLod(s_irradiance, vec4(normal.xyz, loc_i), 0);
+    //vec3 irr = textureCubeArrayLod(s_irradiance, vec4(normal.xyz, loc_i), 0);
+    vec3 irr = textureCubeLod(s_irradianceMap, vec3(normal.xyz), 0);
     vec3 diffuse = albedo * irr;
 
     if (u_debugMode.x == 7.0) {
@@ -164,7 +165,8 @@ vec3 calculateIBL(vec3 pos_ws, vec3 to_eye, vec3 normal, vec3 albedo, float roug
     }
 
     vec3 r = reflect(to_eye, normal);
-    vec3 spec_irr = textureCubeArrayLod(s_specIrradiance, vec4(r.xyz, loc_i), floor(roughness*10)).rgb;
+    //vec3 spec_irr = textureCubeArrayLod(s_specIrradiance, vec4(r.xyz, loc_i), floor(roughness*10)).rgb;
+    vec3 spec_irr = textureCubeLod(s_environmentMap, vec3(r.xyz), floor(roughness*10)).rgb;
     vec2 env_bdrf = texture2D(s_bdrfLUT, vec2(max(dot(normal, to_eye), 0), roughness));
     vec3 spec_c = spec_irr * (kS * env_bdrf.x + env_bdrf.y);
 
@@ -261,7 +263,7 @@ void main() {
         vec3 half = normalize(toEye + lightDir);
         // Sunlight is white so the PI goes into the maths raw
         gl_FragColor.rgb += ndotl * (
-            (calculateDiffuse(albedo.rgb) * PI * u_sunlight.w) +
+            ((calculateDiffuse(albedo.rgb) * PI * u_sunlight.w)*(1-metal)) +
             calculateSpecular(normal, half, toEye, lightDir, rough.r, metal ? albedo.rgb : SHADER_NONMETAL_SPEC_COLOUR)
         );
     }

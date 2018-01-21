@@ -8,6 +8,10 @@ set TEXTUREC=../../external/bgfx/.build/win64_vs2015/bin/texturecRelease
 
 del /Q "%DATADEST%\*.ktx"
 
+copy "%DATASRC%/kyoto_irr.dds" "%DATADEST%/kyoto_irr.dds"
+copy "%DATASRC%/kyoto_lods.dds" "%DATADEST%/kyoto_lods.dds"
+copy "%DATASRC%/MonValley_Lookout\MonValley_A_LookoutPoint_2k.hdr" "%DATADEST%/skybox.hdr"
+
 REM source material - leaf
 echo Building sponza\textures_pbr\Sponza_Thorn_diffuse.tga
 call "%TEXTUREC%" -f "%DATASRC%\sponza\textures_pbr\Sponza_Thorn_diffuse.tga" -o "%DATADEST%\Sponza_Thorn_diffuse.ktx" -t BC3 -m --as ktx

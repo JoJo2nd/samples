@@ -18,12 +18,12 @@ SAMPLER2D(s_roughness, 3);
 // alpha mask
 SAMPLER2D(s_mask, 4);
 
-// colour LUT
-SAMPLER3D(s_colourLUT, 5);
+// colour LUT or Skybox
 SAMPLERCUBE(s_environmentMap, 6);
+SAMPLERCUBE(s_irradianceMap, 7);
 
 // IBL
-SAMPLER2D(s_bdrfLUT, 7);
+SAMPLER2D(s_bdrfLUT, 5);
 
 struct BgfxSamplerCubeArray {
     SamplerState m_sampler;

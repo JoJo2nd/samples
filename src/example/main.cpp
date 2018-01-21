@@ -22,6 +22,11 @@
 
 #include "common_defines.h"
 #include "bx/readerwriter.h"
+#include "bimg/bimg.h"
+#include "bimg/decode.h"
+
+//#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
 #include <windows.h>
 
@@ -35,6 +40,7 @@ uint32_t frameReturn;
 bgfx::UniformHandle dynLightsUniform;
 bgfx::UniformHandle cubeFaceUniform;
 bgfx::UniformHandle environmentMapTex;
+bgfx::UniformHandle irradianceMapTex;
 bgfx::UniformHandle gridSizeUniform;
 bgfx::UniformHandle gridOffsetUniform;
 bgfx::UniformHandle specIrradianceAraryTex;
@@ -101,6 +107,49 @@ struct PosTexCoord0Vertex {
 };
 
 bgfx::VertexDecl PosTexCoord0Vertex::ms_decl;
+
+typedef uint16_t half_t;
+
+inline void float_to_half(half_t* hfptr, float f) {
+  union Data32 {
+    uint32_t u32;
+    float    f32;
+  };
+
+  Data32 d;
+  d.f32 = f;
+
+  uint32_t sign = d.u32 >> 31;
+  uint32_t exponent = (d.u32 >> 23) & ((1 << 8) - 1);
+  uint32_t mantissa = d.u32 & ((1 << 23) - 1);
+  ;
+
+  if (exponent == 0) {
+    // zero or denorm -> zero
+    mantissa = 0;
+
+  } else if (exponent == 255 && mantissa != 0) {
+    // nan -> infinity
+    exponent = 31;
+    mantissa = 0;
+
+  } else if (exponent >= 127 - 15 + 31) {
+    // overflow or infinity -> infinity
+    exponent = 31;
+    mantissa = 0;
+
+  } else if (exponent <= 127 - 15) {
+    // underflow -> zero
+    exponent = 0;
+    mantissa = 0;
+
+  } else {
+    exponent -= 127 - 15;
+    mantissa >>= 13;
+  }
+
+  *hfptr = (half_t)((sign << 15) | (exponent << 10) | mantissa);
+}
 
 static const bgfx::Memory* loadMem(const char* filePath) {
   FILE* f = fopen(filePath, "rb");
@@ -174,6 +223,94 @@ void screenSpaceQuad(float _textureWidth,
 
     bgfx::setVertexBuffer(0, &vb);
   }
+}
+
+static void imageReleaseCb(void* _ptr, void* _userData)
+{
+  BX_UNUSED(_ptr);
+  bimg::ImageContainer* imageContainer = (bimg::ImageContainer*)_userData;
+  bimg::imageFree(imageContainer);
+}
+
+bgfx::TextureHandle loadTexture(void* data, uint32_t size, char const* name, uint32_t _flags = BGFX_TEXTURE_NONE, uint8_t _skip = 0, bgfx::TextureInfo* _info = NULL, bimg::Orientation::Enum* _orientation = NULL) {
+  BX_UNUSED(_skip);
+  bgfx::TextureHandle handle = BGFX_INVALID_HANDLE;
+
+  if (NULL != data)
+  {
+    bimg::ImageContainer* imageContainer = bimg::imageParse(entry::getAllocator(), data, size);
+
+    if (NULL != imageContainer)
+    {
+      if (NULL != _orientation)
+      {
+        *_orientation = imageContainer->m_orientation;
+      }
+
+      const bgfx::Memory* mem = bgfx::makeRef(
+        imageContainer->m_data
+        , imageContainer->m_size
+        , imageReleaseCb
+        , imageContainer
+      );
+      //unload(data);
+      bx::free(entry::getAllocator(), data);
+
+      if (imageContainer->m_cubeMap)
+      {
+        handle = bgfx::createTextureCube(
+          uint16_t(imageContainer->m_width)
+          , 1 < imageContainer->m_numMips
+          , imageContainer->m_numLayers
+          , bgfx::TextureFormat::Enum(imageContainer->m_format)
+          , _flags
+          , mem
+        );
+      }
+      else if (1 < imageContainer->m_depth)
+      {
+        handle = bgfx::createTexture3D(
+          uint16_t(imageContainer->m_width)
+          , uint16_t(imageContainer->m_height)
+          , uint16_t(imageContainer->m_depth)
+          , 1 < imageContainer->m_numMips
+          , bgfx::TextureFormat::Enum(imageContainer->m_format)
+          , _flags
+          , mem
+        );
+      }
+      else
+      {
+        handle = bgfx::createTexture2D(
+          uint16_t(imageContainer->m_width)
+          , uint16_t(imageContainer->m_height)
+          , 1 < imageContainer->m_numMips
+          , imageContainer->m_numLayers
+          , bgfx::TextureFormat::Enum(imageContainer->m_format)
+          , _flags
+          , mem
+        );
+      }
+
+      bgfx::setName(handle, name);
+
+      if (NULL != _info)
+      {
+        bgfx::calcTextureSize(
+          *_info
+          , uint16_t(imageContainer->m_width)
+          , uint16_t(imageContainer->m_height)
+          , uint16_t(imageContainer->m_depth)
+          , imageContainer->m_cubeMap
+          , 1 < imageContainer->m_numMips
+          , imageContainer->m_numLayers
+          , bgfx::TextureFormat::Enum(imageContainer->m_format)
+        );
+      }
+    }
+  }
+
+  return handle;
 }
 
 struct CameraParams {
@@ -355,6 +492,7 @@ private:
   bgfx::ProgramHandle tonemapProg = BGFX_INVALID_HANDLE;
   bgfx::ProgramHandle luminancePixelProg = BGFX_INVALID_HANDLE;
   bgfx::ProgramHandle copyProg = BGFX_INVALID_HANDLE;
+  bgfx::ProgramHandle skyboxProg = BGFX_INVALID_HANDLE;
   bgfx::ProgramHandle irConvolveProg = BGFX_INVALID_HANDLE;
   bgfx::ProgramHandle sirConvolveProg = BGFX_INVALID_HANDLE;
   bgfx::ProgramHandle bdrfConvolveProg = BGFX_INVALID_HANDLE;
@@ -370,6 +508,7 @@ private:
   bgfx::UniformHandle metalRoughUniform;
   bgfx::UniformHandle debugUniform;
   bgfx::UniformHandle ambientColourUniform;
+  bgfx::UniformHandle cameraPosUniform;
 
   bgfx::UniformHandle baseTex;
   bgfx::UniformHandle normalTex;
@@ -396,6 +535,9 @@ private:
   bgfx::TextureHandle finalColourTarget;
   bgfx::TextureHandle luminanceMips[16];
   bgfx::TextureHandle colourGradeLUT;
+  bgfx::TextureHandle skyboxTex = BGFX_INVALID_HANDLE;
+  bgfx::TextureHandle skyboxTex2 = BGFX_INVALID_HANDLE;
+  bgfx::TextureHandle skyboxIrrTex = BGFX_INVALID_HANDLE;
 
 
   half_t*           colourGradeSrc;
@@ -560,6 +702,10 @@ private:
       bgfx::destroy(copyProg);
       copyProg = BGFX_INVALID_HANDLE;
     }
+    if (bgfx::isValid(skyboxProg)) {
+      bgfx::destroy(skyboxProg);
+      skyboxProg = BGFX_INVALID_HANDLE;
+    }
     if (bgfx::isValid(irConvolveProg)) {
       bgfx::destroy(irConvolveProg);
       irConvolveProg = BGFX_INVALID_HANDLE;
@@ -571,6 +717,18 @@ private:
     if (bgfx::isValid(bdrfConvolveProg)) {
       bgfx::destroy(bdrfConvolveProg);
       bdrfConvolveProg = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(skyboxTex)) {
+      bgfx::destroy(skyboxTex);
+      skyboxTex = BGFX_INVALID_HANDLE; 
+    }
+    if (bgfx::isValid(skyboxIrrTex)) {
+      bgfx::destroy(skyboxIrrTex);
+      skyboxIrrTex = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(skyboxTex2)) {
+      bgfx::destroy(skyboxTex2);
+      skyboxTex2 = BGFX_INVALID_HANDLE;
     }
   }
 
@@ -620,6 +778,10 @@ private:
     ps = loadMem(FS_COPY_ASSET_PATH);
     copyProg = bgfx::createProgram(bgfx::createShader(vs), bgfx::createShader(ps), true);
 
+    vs = loadMem(VS_SKYBOX_ASSET_PATH);
+    ps = loadMem(FS_SKYBOX_ASSET_PATH);
+    skyboxProg = bgfx::createProgram(bgfx::createShader(vs), bgfx::createShader(ps), true);
+
     bgfx::Memory const* cs = loadMem(LUMINANCE_AVG_ASSET_PATH);
     logLuminanceAvProg = bgfx::createProgram(bgfx::createShader(cs), true);
 
@@ -634,6 +796,37 @@ private:
     vs = loadMem(VS_DEBUG_ASSET_PATH);
     ps = loadMem(FS_BRDF_CONVOLVE_ASSET_PATH);
     bdrfConvolveProg = bgfx::createProgram(bgfx::createShader(vs), bgfx::createShader(ps), true);
+
+    //bgfx::Memory const* cm_mem = loadMem(SKYBOX_ASSET_PATH);
+    //skyboxTex = loadTexture(cm_mem->data, cm_mem->size, "EnvMap");
+    skyboxTex = loadTexture(SKYBOX_ASSET_PATH);
+    skyboxIrrTex = loadTexture(SKYBOX_IRR_ASSET_PATH);
+
+    int x, y, n;
+    float* hdr_data = stbi_loadf(HDR_SKYBOX_ASSET_PATH, &x, &y, &n, 3);
+    half_t* hhdr = (half_t*)malloc(x*y*sizeof(half_t)*4);
+    half_t* dest = hhdr;
+    float* src = hdr_data;
+    for (int i=0; i < x; ++i) {
+      for (int j = 0; j < y; ++j) {
+        float_to_half(dest++, *src); src++;
+        float_to_half(dest++, *src); src++;
+        float_to_half(dest++, *src); src++;
+        // Skip Alpha 
+        ++dest;
+      }
+    }
+
+    skyboxTex2 = bgfx::createTexture2D(x, y, false, 1, bgfx::TextureFormat::RGBA16F, 0, bgfx::copy(hhdr, x*y*sizeof(half_t)*4));
+
+    stbi_image_free(hdr_data);
+    free(hhdr);
+  }
+
+  void renderCubemapInfluenceFaces() {
+    // for each face
+    //  build list of intersecting probes (up to 4)
+    //   render probe influence (using https://seblagarde.wordpress.com/2012/09/29/image-based-lighting-approaches-and-parallax-corrected-cubemap/)
   }
 
   void createIRCubemapArrays(uint32_t             map_dim[3],
@@ -697,8 +890,7 @@ private:
               // mip_ptr += sir_mip_size[m];
             }
           }
-          sprintf(tmp_fn, "%dx%dx%d - index = %d\n", x, y, z, cm_idx);
-          OutputDebugString(tmp_fn);
+          printf("%dx%dx%d - index = %d\n", x, y, z, cm_idx);
         }
       }
     }
@@ -712,9 +904,9 @@ private:
 
     // create our textures
     *ir_cma = bgfx::createTextureCube(
-      IR_MAP_DIM, false, total_cms, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_NONE, ir_temp_alloc);
+      IR_MAP_DIM, false, total_cms, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_NONE/*, ir_temp_alloc*/);
     *sir_cma = bgfx::createTextureCube(
-      SIR_MAP_DIM, true, total_cms, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_NONE, sir_temp_alloc);
+      SIR_MAP_DIM, true, total_cms, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_NONE/*, sir_temp_alloc*/);
     *bgfx_th = bgfx::createTexture2D(
       BDRF_DIM, BDRF_DIM, false, 1, bgfx::TextureFormat::RG16F, BGFX_TEXTURE_NONE, bdrf_temp_alloc);
 
@@ -819,6 +1011,7 @@ private:
     cubeFaceUniform = bgfx::createUniform("u_cubeFace", bgfx::UniformType::Vec4);
     gridSizeUniform = bgfx::createUniform("u_gridParams", bgfx::UniformType::Vec4);
     gridOffsetUniform = bgfx::createUniform("u_gridOffset", bgfx::UniformType::Vec4);
+    cameraPosUniform = bgfx::createUniform("u_inverseProj", bgfx::UniformType::Mat4);
 
     baseTex = bgfx::createUniform("s_base", bgfx::UniformType::Int1);
     normalTex = bgfx::createUniform("s_normal", bgfx::UniformType::Int1);
@@ -828,6 +1021,7 @@ private:
     luminanceTex = bgfx::createUniform("s_luminance", bgfx::UniformType::Int1);
     colourLUTTex = bgfx::createUniform("s_colourLUT", bgfx::UniformType::Int1);
     environmentMapTex = bgfx::createUniform("s_environmentMap", bgfx::UniformType::Int1);
+    irradianceMapTex = bgfx::createUniform("s_irradianceMap", bgfx::UniformType::Int1);
     irradianceAraryTex = bgfx::createUniform("s_irradiance", bgfx::UniformType::Int1);
     specIrradianceAraryTex = bgfx::createUniform("s_specIrradiance", bgfx::UniformType::Int1);
     bdrfTex = bgfx::createUniform("s_bdrfLUT", bgfx::UniformType::Int1);
@@ -984,6 +1178,9 @@ private:
     bgfx::setViewClear(RENDER_PASS_SOLID, BGFX_CLEAR_COLOR, 0, 1.0f, 0);
     bgfx::setViewName(RENDER_PASS_SOLID, "Solid Pass");
     bgfx::setViewMode(RENDER_PASS_SOLID, bgfx::ViewMode::Sequential);
+    bgfx::setViewClear(RENDER_PASS_SKYBOX, BGFX_CLEAR_NONE, 0, 1.0f, 0);
+    bgfx::setViewName(RENDER_PASS_SKYBOX, "Skybox Pass");
+    bgfx::setViewMode(RENDER_PASS_SKYBOX, bgfx::ViewMode::Sequential);
 
     for (uint32_t i = 0; i < numLuminanceMips; ++i) {
       bgfx::setViewClear(RENDER_PASS_LUMINANCE_START + i, BGFX_CLEAR_NONE, 0, 1.0f, 0);
@@ -1503,7 +1700,7 @@ private:
 
       bx::mtxScale(mTmp, GLOBAL_SCALE, GLOBAL_SCALE, GLOBAL_SCALE);
 
-      float proj[16], i_view[16];
+      float proj[16], i_proj[16], i_view[16];
       cam.x = cameraPos[0];
       cam.y = cameraPos[1];
       cam.z = cameraPos[2];
@@ -1522,6 +1719,9 @@ private:
 
       float vheight = tanf(cam.fovy) * cam.nearPlane;
       float vwidth = vheight * cam.aspect;
+
+      bx::mtxInverse(i_proj, cam.viewProj);
+      bgfx::setUniform(cameraPosUniform, i_proj);
 
       bgfx::dbgTextClear();
       ddBegin(RENDER_PASS_DEBUG);
@@ -1651,6 +1851,10 @@ private:
       bgfx::setViewTransform(RENDER_PASS_SOLID, view, proj);
       bgfx::setViewFrameBuffer(RENDER_PASS_SOLID, mainTarget);
 
+      bgfx::setViewRect(RENDER_PASS_SKYBOX, 0, 0, m_width, m_height);
+      bgfx::setViewTransform(RENDER_PASS_SKYBOX, idt, orthoProj);
+      bgfx::setViewFrameBuffer(RENDER_PASS_SKYBOX, mainTarget);
+
       uint32_t luminance_w = m_width / 2, luminance_h = m_height / 2;
       for (uint32_t i = 0; i < numLuminanceMips; ++i) {
         bgfx::setViewRect(RENDER_PASS_LUMINANCE_START + i, 0, 0, luminance_w, luminance_h);
@@ -1694,7 +1898,9 @@ private:
       };
 
       util::Texture env_texs[] = {
-        {7, bdrfTex, bdrfTexture},
+        {5, bdrfTex, bdrfTexture},
+        {6, environmentMapTex, skyboxTex},
+        {7, irradianceMapTex, skyboxIrrTex},
         {8, irradianceAraryTex, irCubemapArrayTexture},
         {9, specIrradianceAraryTex, specIRCubemapArrayTexture},
       };
@@ -1749,7 +1955,7 @@ private:
                       handles,
                       buffer,
                       env_texs,
-                      3);
+                      5);
           for (uint32_t o = 0; o < TOTAL_ORBS; ++o) {
             float model[16];
             bx::mtxTranslate(model, Orbs[o].position.x, Orbs[o].position.y, Orbs[o].position.z);
@@ -1779,7 +1985,7 @@ private:
                     handles,
                     buffer,
                     env_texs,
-                    3);
+                    5);
         for (uint32_t o = 0; o < TOTAL_ORBS; ++o) {
           float model[16];
           bx::mtxScale(model, 2.5f);
@@ -1803,8 +2009,18 @@ private:
                       handles,
                       buffer,
                       env_texs,
-                      3);
+                      5);
         }
+
+        //Render SKYBOX
+        bgfx::setTexture(0, baseTex, skyboxTex2);
+        bgfx::setTexture(6, environmentMapTex, skyboxTex);
+        bgfx::setTexture(7, irradianceMapTex, skyboxIrrTex);
+        bgfx::setState(0 | BGFX_STATE_RGB_WRITE | BGFX_STATE_ALPHA_WRITE | BGFX_STATE_DEPTH_TEST_LEQUAL |
+          BGFX_STATE_DEPTH_WRITE | BGFX_STATE_MSAA);
+        screenSpaceQuad((float)m_width, (float)m_height, s_texelHalf, m_caps->originBottomLeft);
+        bgfx::submit(RENDER_PASS_SKYBOX, skyboxProg);
+
 
         bool enableFullscreenQuad = bgfx::isValid(ShaderParams[dbgShader].fullscreenProg);
         if (enableFullscreenQuad) {

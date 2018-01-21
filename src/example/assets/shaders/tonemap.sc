@@ -12,6 +12,7 @@ uniform vec4 u_exposureParams;
 #define u_exposureKey (u_exposureParams.z)
 
 SAMPLER2D(s_luminance, 1);
+SAMPLER3D(s_colourLUT, 5);// colour LUT
 BUFFER_RO(averageLuma,             float, 2);
 
 // Do ACES tonemap
