@@ -10,7 +10,8 @@ del /Q "%DATADEST%\*.ktx"
 
 copy "%DATASRC%/kyoto_irr.dds" "%DATADEST%/kyoto_irr.dds"
 copy "%DATASRC%/kyoto_lods.dds" "%DATADEST%/kyoto_lods.dds"
-copy "%DATASRC%/MonValley_Lookout\MonValley_A_LookoutPoint_2k.hdr" "%DATADEST%/skybox.hdr"
+copy "%DATASRC%/MonValley_Lookout/MonValley_A_LookoutPoint_2k.hdr" "%DATADEST%/skybox.hdr"
+copy "%DATASRC%/Summi_Pool/Summi_Pool_3k.hdr" "%DATADEST%/skybox.hdr"
 
 REM source material - leaf
 echo Building sponza\textures_pbr\Sponza_Thorn_diffuse.tga

@@ -14,7 +14,7 @@
 #include "../common/debugdraw/debugdraw.h"
 #include "../common/debugdraw/debugdraw.cpp"
 #include <assert.h>
-//#include "Remotery.h"
+#include "Remotery.h"
 //#include "Remotery.c"
 
 #include "common_defines.h"

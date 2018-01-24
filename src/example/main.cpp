@@ -17,7 +17,7 @@
 //#include "../common/imgui/imgui.cpp"
 #include <assert.h>
 #include "common_util.h"
-//#include "Remotery.h"
+#include "Remotery.h"
 //#include "Remotery.c"
 
 #include "common_defines.h"
@@ -107,49 +107,6 @@ struct PosTexCoord0Vertex {
 };
 
 bgfx::VertexDecl PosTexCoord0Vertex::ms_decl;
-
-typedef uint16_t half_t;
-
-inline void float_to_half(half_t* hfptr, float f) {
-  union Data32 {
-    uint32_t u32;
-    float    f32;
-  };
-
-  Data32 d;
-  d.f32 = f;
-
-  uint32_t sign = d.u32 >> 31;
-  uint32_t exponent = (d.u32 >> 23) & ((1 << 8) - 1);
-  uint32_t mantissa = d.u32 & ((1 << 23) - 1);
-  ;
-
-  if (exponent == 0) {
-    // zero or denorm -> zero
-    mantissa = 0;
-
-  } else if (exponent == 255 && mantissa != 0) {
-    // nan -> infinity
-    exponent = 31;
-    mantissa = 0;
-
-  } else if (exponent >= 127 - 15 + 31) {
-    // overflow or infinity -> infinity
-    exponent = 31;
-    mantissa = 0;
-
-  } else if (exponent <= 127 - 15) {
-    // underflow -> zero
-    exponent = 0;
-    mantissa = 0;
-
-  } else {
-    exponent -= 127 - 15;
-    mantissa >>= 13;
-  }
-
-  *hfptr = (half_t)((sign << 15) | (exponent << 10) | mantissa);
-}
 
 static const bgfx::Memory* loadMem(const char* filePath) {
   FILE* f = fopen(filePath, "rb");
@@ -809,9 +766,9 @@ private:
     float* src = hdr_data;
     for (int i=0; i < x; ++i) {
       for (int j = 0; j < y; ++j) {
-        float_to_half(dest++, *src); src++;
-        float_to_half(dest++, *src); src++;
-        float_to_half(dest++, *src); src++;
+		*src = util::float_to_half(*dest); dest++; src++;
+		*src = util::float_to_half(*dest); dest++; src++;
+		*src = util::float_to_half(*dest); dest++; src++;
         // Skip Alpha 
         ++dest;
       }
@@ -1946,6 +1903,7 @@ private:
         uint64_t state = 0;
 
         if (bgfx::isValid(ShaderParams[dbgShader].zfillProg)) {
+#if 0
           // Set instance data buffer.
           mesh_submit(&m_mesh,
                       RENDER_PASS_ZPREPASS,
@@ -1956,6 +1914,7 @@ private:
                       buffer,
                       env_texs,
                       5);
+#endif
           for (uint32_t o = 0; o < TOTAL_ORBS; ++o) {
             float model[16];
             bx::mtxTranslate(model, Orbs[o].position.x, Orbs[o].position.y, Orbs[o].position.z);
@@ -1974,6 +1933,7 @@ private:
                         BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_DEPTH_WRITE | BGFX_STATE_CULL_CCW | BGFX_STATE_MSAA);
           }
         }
+#if 0
         // Set instance data buffer.
         mesh_submit(&m_mesh,
                     RENDER_PASS_SOLID,
@@ -1986,6 +1946,7 @@ private:
                     buffer,
                     env_texs,
                     5);
+#endif
         for (uint32_t o = 0; o < TOTAL_ORBS; ++o) {
           float model[16];
           bx::mtxScale(model, 2.5f);
